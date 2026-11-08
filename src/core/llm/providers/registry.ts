@@ -1,0 +1,156 @@
+import { ProviderDefinition, ProviderId, AllSettings } from '../types';
+
+export const PROVIDERS: Record<ProviderId, ProviderDefinition> = {
+  openrouter: {
+    id: 'openrouter',
+    name: 'OpenRouter',
+    description: 'Unified aggregator supporting Claude 3.7, DeepSeek R1, GPT-4o, Llama 3.3, and 100+ models.',
+    defaultBaseUrl: 'https://openrouter.ai/api/v1',
+    defaultModel: 'anthropic/claude-3.7-sonnet',
+    apiKeyHelpUrl: 'https://openrouter.ai/keys',
+    requiresApiKey: true,
+    models: [
+      { id: 'anthropic/claude-3.7-sonnet', name: 'Claude 3.7 Sonnet', description: 'Top recommended agentic model with hybrid reasoning', recommended: true },
+      { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet', description: 'Elite coding & browser navigation capability', recommended: true },
+      { id: 'deepseek/deepseek-r1', name: 'DeepSeek R1', description: 'High-power open-weights reasoning model' },
+      { id: 'deepseek/deepseek-chat', name: 'DeepSeek V3', description: 'Fast, highly capable, and ultra low-cost' },
+      { id: 'google/gemini-2.0-flash-001', name: 'Gemini 2.0 Flash', description: 'Blazing fast with large context window' },
+      { id: 'openai/gpt-4o', name: 'OpenAI GPT-4o', description: 'Flagship multimodal model' },
+      { id: 'meta-llama/llama-3.3-70b-instruct', name: 'Llama 3.3 70B', description: 'Open source powerhouse' },
+      { id: 'qwen/qwen-2.5-72b-instruct', name: 'Qwen 2.5 72B', description: 'Excellent reasoning and agentic accuracy' },
+    ],
+  },
+  gemini: {
+    id: 'gemini',
+    name: 'Google Gemini',
+    description: 'Direct Google AI Studio API with massive context and ultra-fast response times.',
+    defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+    defaultModel: 'gemini-2.0-flash',
+    apiKeyHelpUrl: 'https://aistudio.google.com/app/apikey',
+    requiresApiKey: true,
+    models: [
+      { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', description: 'Fastest next-gen multimodal model', recommended: true },
+      { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', description: 'Deep reasoning and complex task execution' },
+      { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', description: '1M+ context window for large webpages' },
+      { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', description: 'Lightweight and low latency' },
+    ],
+  },
+  anthropic: {
+    id: 'anthropic',
+    name: 'Anthropic Claude',
+    description: 'Direct Anthropic Messages API with exceptional tool calling and DOM understanding.',
+    defaultBaseUrl: 'https://api.anthropic.com/v1',
+    defaultModel: 'claude-3-7-sonnet-20250219',
+    apiKeyHelpUrl: 'https://console.anthropic.com/settings/keys',
+    requiresApiKey: true,
+    models: [
+      { id: 'claude-3-7-sonnet-20250219', name: 'Claude 3.7 Sonnet', description: 'Latest hybrid reasoning model', recommended: true },
+      { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet (v2)', description: 'Industry benchmark for browser agents', recommended: true },
+      { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku', description: 'Rapid responses for quick tasks' },
+      { id: 'claude-3-opus-20240229', name: 'Claude 3 Opus', description: 'Maximum depth for complex analysis' },
+    ],
+  },
+  openai: {
+    id: 'openai',
+    name: 'OpenAI (ChatGPT)',
+    description: 'Direct OpenAI API powering GPT-4o and advanced reasoning models.',
+    defaultBaseUrl: 'https://api.openai.com/v1',
+    defaultModel: 'gpt-4o',
+    apiKeyHelpUrl: 'https://platform.openai.com/api-keys',
+    requiresApiKey: true,
+    models: [
+      { id: 'gpt-4o', name: 'GPT-4o', description: 'Flagship omni-model with structured tool output', recommended: true },
+      { id: 'gpt-4o-mini', name: 'GPT-4o Mini', description: 'Fast, lightweight and cost-effective' },
+      { id: 'o3-mini', name: 'o3-mini', description: 'STEM and code reasoning model' },
+      { id: 'o1', name: 'o1', description: 'Deep chain-of-thought reasoning' },
+    ],
+  },
+  grok: {
+    id: 'grok',
+    name: 'xAI Grok',
+    description: 'Direct xAI API offering high-speed frontier intelligence.',
+    defaultBaseUrl: 'https://api.x.ai/v1',
+    defaultModel: 'grok-2-latest',
+    apiKeyHelpUrl: 'https://console.x.ai/',
+    requiresApiKey: true,
+    models: [
+      { id: 'grok-2-latest', name: 'Grok 2', description: 'Top frontier reasoning and live knowledge', recommended: true },
+      { id: 'grok-2-vision-1212', name: 'Grok 2 Vision', description: 'Multimodal vision and visual understanding' },
+      { id: 'grok-beta', name: 'Grok Beta', description: 'Standard Grok endpoint' },
+    ],
+  },
+  deepseek: {
+    id: 'deepseek',
+    name: 'DeepSeek',
+    description: 'Direct DeepSeek API with unbeatable price-to-performance.',
+    defaultBaseUrl: 'https://api.deepseek.com',
+    defaultModel: 'deepseek-chat',
+    apiKeyHelpUrl: 'https://platform.deepseek.com/api_keys',
+    requiresApiKey: true,
+    models: [
+      { id: 'deepseek-chat', name: 'DeepSeek Chat (V3)', description: 'General conversational & tool calling model', recommended: true },
+      { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner (R1)', description: 'Specialized chain-of-thought reasoning' },
+    ],
+  },
+  custom: {
+    id: 'custom',
+    name: 'Custom / Local LLM',
+    description: 'Connect any OpenAI-compatible server (Ollama, LM Studio, Groq, Together, vLLM).',
+    defaultBaseUrl: 'http://localhost:11434/v1',
+    defaultModel: 'llama3.2',
+    apiKeyHelpUrl: 'https://ollama.com',
+    requiresApiKey: false,
+    models: [
+      { id: 'llama3.2', name: 'Llama 3.2 (Local)' },
+      { id: 'mistral', name: 'Mistral (Local)' },
+      { id: 'qwen2.5-coder', name: 'Qwen 2.5 Coder (Local)' },
+    ],
+  },
+};
+
+export const DEFAULT_SETTINGS: AllSettings = {
+  activeProvider: 'openrouter',
+  providers: {
+    openrouter: {
+      apiKey: '',
+      baseUrl: PROVIDERS.openrouter.defaultBaseUrl,
+      selectedModel: PROVIDERS.openrouter.defaultModel,
+    },
+    gemini: {
+      apiKey: '',
+      baseUrl: PROVIDERS.gemini.defaultBaseUrl,
+      selectedModel: PROVIDERS.gemini.defaultModel,
+    },
+    anthropic: {
+      apiKey: '',
+      baseUrl: PROVIDERS.anthropic.defaultBaseUrl,
+      selectedModel: PROVIDERS.anthropic.defaultModel,
+    },
+    openai: {
+      apiKey: '',
+      baseUrl: PROVIDERS.openai.defaultBaseUrl,
+      selectedModel: PROVIDERS.openai.defaultModel,
+    },
+    grok: {
+      apiKey: '',
+      baseUrl: PROVIDERS.grok.defaultBaseUrl,
+      selectedModel: PROVIDERS.grok.defaultModel,
+    },
+    deepseek: {
+      apiKey: '',
+      baseUrl: PROVIDERS.deepseek.defaultBaseUrl,
+      selectedModel: PROVIDERS.deepseek.defaultModel,
+    },
+    custom: {
+      apiKey: '',
+      baseUrl: PROVIDERS.custom.defaultBaseUrl,
+      selectedModel: PROVIDERS.custom.defaultModel,
+    },
+  },
+  agent: {
+    maxSteps: 25,
+    showVisualLabels: true,
+    autoScroll: true,
+    temperature: 0.2,
+  },
+};
