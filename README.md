@@ -16,16 +16,16 @@
 
 ## 🤖 Supported Companies & Models
 
-| Company | Top Model | Best Cheap Model |
+| AI Company | Latest / Frontier Model | Best Budget Model |
 | :--- | :--- | :--- |
 | **OpenAI** | `gpt-6-astra` | `gpt-6-luna` |
-| **Google** | `gemini-3.8-pro` | `gemini-3.8-flash` |
+| **Google** | `gemini-4-argon` | `gemini-3.8-flash` |
 | **Anthropic** | `claude-opus-5-5` | `claude-haiku-5-5` |
-| **DeepSeek** | `deepseek-v4.1` | `deepseek-v4.1-flash` |
-| **Alibaba** | `qwen3.8-max` | `qwen3.8-flash` |
-| **xAI** | `grok-4.7` | `grok-4.7-fast` |
+| **DeepSeek** | `deepseek-v4-pro` | `deepseek-flash` |
+| **Alibaba Qwen** | `qwen3.8-max` | `qwen3.8-flash` |
+| **xAI** | `grok-4.7` | `grok-build-0.1` |
 | **Z.ai** | `glm-5.3` | `glm-5.3-flash` |
-| **Mistral** | `mistral-large` | `ministral-3-3b` |
+| **Mistral** | `mistral-large-4` | `ministral-3b-2512` |
 
 *(Also includes **OpenRouter** and **Custom/Local LLMs** with custom model override).*
 
@@ -49,7 +49,7 @@
    `/root/browseragent/dist`
    *(Or extract `/root/browseragent/browseragent-v1.0.0.zip`)*
 4. Click the **BrowserAgent** icon in your browser toolbar to open the Side Panel!
-5. In **Keys & Models**, select your company, paste your API key, choose between the **Top Model** and **Best Cheap Model**, and run tasks directly.
+5. In **Keys & Models**, select your company, paste your API key, choose between the **Frontier Model** and **Budget Model**, and run tasks directly.
 
 ---
 
