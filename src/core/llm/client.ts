@@ -105,6 +105,18 @@ export async function executeLLMCall(
         onStatusNotice,
       });
 
+    case 'demonroute':
+      return callOpenAICompatible({
+        apiKey,
+        baseUrl: providerConfig.baseUrl || PROVIDERS.demonroute.defaultBaseUrl!,
+        model,
+        messages,
+        tools,
+        temperature,
+        providerName: 'DemonRoute',
+        onStatusNotice,
+      });
+
     case 'custom':
       return callOpenAICompatible({
         apiKey,
