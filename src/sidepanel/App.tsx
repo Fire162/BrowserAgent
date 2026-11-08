@@ -8,6 +8,12 @@ import { AgentExecution, StepRecord, TargetTabInfo } from '../core/agent/loop';
 import { saveTask, TaskRecord } from '../core/storage/db';
 import { PROVIDERS } from '../core/llm/providers/registry';
 
+export interface UserPromptEntry {
+  id: string;
+  text: string;
+  timestamp: number;
+}
+
 export const App: React.FC = () => {
   const {
     settings,
@@ -28,6 +34,7 @@ export const App: React.FC = () => {
   const [finalResult, setFinalResult] = useState<string | null>(null);
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
   const [targetTab, setTargetTab] = useState<TargetTabInfo | null>(null);
+  const [userPrompts, setUserPrompts] = useState<UserPromptEntry[]>([]);
 
   const activeExecutionRef = useRef<AgentExecution | null>(null);
   const userPromptResolverRef = useRef<((answer: string) => void) | null>(null);
@@ -67,6 +74,23 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleNewChat = () => {
+    if (activeExecutionRef.current) {
+      activeExecutionRef.current.abort();
+      activeExecutionRef.current = null;
+    }
+    setIsRunning(false);
+    setIsPaused(false);
+    setSteps([]);
+    setFinalResult(null);
+    setCurrentStep(1);
+    setLiveCostUSD(0);
+    setLiveTokens(0);
+    setPendingQuestion(null);
+    setLiveStatus('');
+    setUserPrompts([]);
+  };
+
   if (loading) {
     return (
       <div className="h-screen w-full bg-slate-950 flex items-center justify-center text-slate-400 text-xs">
@@ -97,6 +121,7 @@ export const App: React.FC = () => {
     setLiveCostUSD(0);
     setLiveTokens(0);
     setPendingQuestion(null);
+    setUserPrompts([{ id: `prompt_${Date.now()}`, text: goal, timestamp: Date.now() }]);
     setLiveStatus('Initializing agent on assigned tab...');
 
     const startTime = Date.now();
@@ -109,7 +134,15 @@ export const App: React.FC = () => {
           setCurrentStep(num);
         },
         onStepComplete: (step) => {
-          setSteps((prev) => [...prev, step]);
+          setSteps((prev) => {
+            const idx = prev.findIndex((s) => s.stepNumber === step.stepNumber);
+            if (idx >= 0) {
+              const next = [...prev];
+              next[idx] = { ...step };
+              return next;
+            }
+            return [...prev, step];
+          });
         },
         onCostUpdate: (cost, tokens) => {
           setLiveCostUSD(cost);
@@ -183,6 +216,13 @@ export const App: React.FC = () => {
     } finally {
       setIsRunning(false);
       setPendingQuestion(null);
+      // Guarantee all steps are finalized (no spinning loaders)
+      setSteps((prev) =>
+        prev.map((s) => ({
+          ...s,
+          status: s.status === 'running' ? (s.resultMessage?.includes('failed') ? 'failed' : 'success') : s.status,
+        }))
+      );
     }
   };
 
@@ -202,7 +242,8 @@ export const App: React.FC = () => {
 
     setIsRunning(true);
     setIsPaused(false);
-    setLiveStatus('Resuming task on assigned tab with follow-up...');
+    setUserPrompts((prev) => [...prev, { id: `prompt_${Date.now()}`, text: followUpText, timestamp: Date.now() }]);
+    setLiveStatus('Continuing task on assigned tab with follow-up...');
 
     try {
       const summary = await activeExecutionRef.current.run(followUpText);
@@ -229,6 +270,13 @@ export const App: React.FC = () => {
       setLiveStatus(`Error: ${err.message}`);
     } finally {
       setIsRunning(false);
+      // Guarantee all steps are finalized
+      setSteps((prev) =>
+        prev.map((s) => ({
+          ...s,
+          status: s.status === 'running' ? (s.resultMessage?.includes('failed') ? 'failed' : 'success') : s.status,
+        }))
+      );
     }
   };
 
@@ -250,17 +298,28 @@ export const App: React.FC = () => {
     setSteps(task.steps || []);
     setFinalResult(task.resultSummary || null);
     setCurrentStep((task.steps?.length || 0) + 1);
-    setIsPaused(true);
+    setIsPaused(false);
     setIsRunning(false);
     setPendingQuestion(null);
-    setLiveStatus(`Loaded past task: "${task.goal.slice(0, 35)}...". Enter a follow-up to continue.`);
+    setUserPrompts([{ id: `history_${task.createdAt}`, text: task.goal, timestamp: task.createdAt }]);
+    setLiveStatus(`Loaded past task: "${task.goal.slice(0, 35)}...". Enter a follow-up to continue in this same chat.`);
 
     const execution = new AgentExecution(
       settings,
       task.goal,
       {
         onStepStart: (num) => setCurrentStep(num),
-        onStepComplete: (step) => setSteps((prev) => [...prev, step]),
+        onStepComplete: (step) => {
+          setSteps((prev) => {
+            const idx = prev.findIndex((s) => s.stepNumber === step.stepNumber);
+            if (idx >= 0) {
+              const next = [...prev];
+              next[idx] = { ...step };
+              return next;
+            }
+            return [...prev, step];
+          });
+        },
         onCostUpdate: (cost, tokens) => {
           setLiveCostUSD(cost);
           setLiveTokens(tokens);
@@ -309,10 +368,13 @@ export const App: React.FC = () => {
           <ChatView
             isRunning={isRunning}
             isPaused={isPaused}
+            hasActiveSession={!!activeExecutionRef.current}
             onStartTask={handleStartTask}
             onPauseTask={handlePauseTask}
             onResumeTask={handleResumeTask}
             onSendSteering={handleSendSteering}
+            onNewChat={handleNewChat}
+            userPrompts={userPrompts}
             currentStep={currentStep}
             maxBudgetUSD={settings.agent.maxBudgetUSD}
             liveCostUSD={liveCostUSD}

@@ -15,18 +15,24 @@ import {
   Plus,
   Download,
   FileText,
+  RotateCcw,
+  User,
 } from 'lucide-react';
 import { StepRecord, TargetTabInfo } from '../../core/agent/loop';
 import { StepTimeline } from './StepTimeline';
 import { MarkdownViewer } from './MarkdownViewer';
+import { UserPromptEntry } from '../App';
 
 interface ChatViewProps {
   isRunning: boolean;
   isPaused: boolean;
+  hasActiveSession: boolean;
   onStartTask: (goal: string) => void;
   onPauseTask: () => void;
   onResumeTask: (followUp: string) => void;
   onSendSteering: (guidance: string) => void;
+  onNewChat: () => void;
+  userPrompts?: UserPromptEntry[];
   currentStep: number;
   maxBudgetUSD: number;
   liveCostUSD: number;
@@ -53,10 +59,13 @@ const QUICK_PROMPTS = [
 export const ChatView: React.FC<ChatViewProps> = ({
   isRunning,
   isPaused,
+  hasActiveSession,
   onStartTask,
   onPauseTask,
   onResumeTask,
   onSendSteering,
+  onNewChat,
+  userPrompts = [],
   currentStep,
   maxBudgetUSD,
   liveCostUSD,
@@ -82,7 +91,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [steps, liveStatus, finalResult, pendingQuestion, isPaused]);
+  }, [steps, liveStatus, finalResult, pendingQuestion, isPaused, userPrompts]);
 
   const handleSubmit = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -98,8 +107,8 @@ export const ChatView: React.FC<ChatViewProps> = ({
       return;
     }
 
-    if (isPaused) {
-      // Resume paused task with follow-up instruction
+    if (hasActiveSession) {
+      // Continue in the SAME chat! Does not wipe previous steps or context!
       onResumeTask(trimmed);
       setInputText('');
       return;
@@ -144,6 +153,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
       totalCostUSD: liveCostUSD,
       totalTokens: liveTokens,
       stepsCount: steps.length,
+      userPrompts: userPrompts.map((p) => p.text),
       summary: finalResult,
       steps: steps.map((s) => ({
         step: s.stepNumber,
@@ -166,7 +176,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
 
   return (
     <div className="flex-1 flex flex-col h-[calc(100vh-85px)] overflow-hidden">
-      {/* Target Tab Binding Indicator */}
+      {/* Target Tab Binding & Session Control Bar */}
       <div className="mx-3.5 mt-2 mb-1 bg-slate-900/90 border border-slate-800 rounded-xl px-3 py-1.5 flex items-center justify-between text-[11px] shadow-sm">
         <div className="flex items-center gap-2 min-w-0 flex-1">
           <span className="h-2 w-2 rounded-full bg-emerald-400 shrink-0 animate-pulse" />
@@ -190,6 +200,19 @@ export const ChatView: React.FC<ChatViewProps> = ({
               <span>Focus Tab</span>
             </button>
           )}
+
+          {hasActiveSession && onNewChat && (
+            <button
+              type="button"
+              onClick={onNewChat}
+              title="Start a fresh new chat session"
+              className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-[10px] flex items-center gap-1 transition-colors border border-slate-700/60 font-medium"
+            >
+              <RotateCcw className="h-3 w-3 text-sky-400" />
+              <span>New Chat</span>
+            </button>
+          )}
+
           {!isRunning && onCreateNewTab && (
             <button
               type="button"
@@ -206,7 +229,8 @@ export const ChatView: React.FC<ChatViewProps> = ({
 
       {/* Scrollable Timeline & Results View */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-3.5 space-y-4 pt-1">
-        {steps.length === 0 && !finalResult && !pendingQuestion && (
+        {/* Welcome State when no tasks or steps */}
+        {steps.length === 0 && !finalResult && !pendingQuestion && userPrompts.length === 0 && (
           <div className="space-y-4 pt-2">
             <div className="text-center py-6 px-4 bg-slate-900/40 border border-slate-800/80 rounded-2xl">
               <div className="h-10 w-10 mx-auto rounded-xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center mb-3">
@@ -245,6 +269,23 @@ export const ChatView: React.FC<ChatViewProps> = ({
                 ))}
               </div>
             </div>
+          </div>
+        )}
+
+        {/* User Conversation Prompts */}
+        {userPrompts.length > 0 && (
+          <div className="space-y-2.5">
+            {userPrompts.map((p, idx) => (
+              <div key={p.id} className="flex justify-end">
+                <div className="bg-sky-600/15 border border-sky-500/30 rounded-2xl rounded-tr-sm px-3.5 py-2 text-xs text-white max-w-[85%] leading-relaxed shadow-sm">
+                  <div className="flex items-center gap-1.5 text-[10px] font-semibold text-sky-400 mb-0.5">
+                    <User className="h-3 w-3" />
+                    <span>{idx === 0 ? 'Initial Goal' : 'Follow-up Instruction'}</span>
+                  </div>
+                  <p className="font-sans font-medium whitespace-pre-wrap">{p.text}</p>
+                </div>
+              </div>
+            ))}
           </div>
         )}
 
@@ -361,8 +402,8 @@ export const ChatView: React.FC<ChatViewProps> = ({
           </div>
         )}
 
-        {/* Action Steps Timeline */}
-        <StepTimeline steps={steps} />
+        {/* Action Steps Timeline (with isRunning and isPaused props to prevent spinning loaders on completed steps) */}
+        <StepTimeline steps={steps} isRunning={isRunning} isPaused={isPaused} />
 
         {/* Final Result Card with Data Export */}
         {finalResult && (
@@ -424,7 +465,9 @@ export const ChatView: React.FC<ChatViewProps> = ({
                 isRunning && !isPaused
                   ? "Steer agent mid-flight (Ctrl+Enter to send)..."
                   : isPaused
-                  ? "Task paused. Enter follow-up instructions (Ctrl+Enter to resume)..."
+                  ? "Task paused. Enter follow-up instruction (Ctrl+Enter)..."
+                  : hasActiveSession
+                  ? "Ask a follow-up or next instruction in this same chat (Ctrl+Enter)..."
                   : "Give a task on assigned tab (Ctrl+Enter to start)..."
               }
               rows={2}
@@ -479,6 +522,8 @@ export const ChatView: React.FC<ChatViewProps> = ({
                     ? 'bg-sky-600 hover:bg-sky-500 disabled:opacity-40 text-white'
                     : isPaused
                     ? 'bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white'
+                    : hasActiveSession
+                    ? 'bg-sky-500 hover:bg-sky-400 disabled:opacity-40 text-black shadow-sky-500/20'
                     : 'bg-sky-500 hover:bg-sky-400 disabled:opacity-40 text-black shadow-sky-500/20'
                 }`}
               >
@@ -491,6 +536,11 @@ export const ChatView: React.FC<ChatViewProps> = ({
                   <>
                     <Play className="h-3 w-3" />
                     <span>Resume with Note</span>
+                  </>
+                ) : hasActiveSession ? (
+                  <>
+                    <Send className="h-3 w-3" />
+                    <span>Send Follow-up</span>
                   </>
                 ) : (
                   <>

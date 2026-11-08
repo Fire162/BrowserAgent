@@ -5,9 +5,11 @@ import { MarkdownViewer } from './MarkdownViewer';
 
 interface StepTimelineProps {
   steps: StepRecord[];
+  isRunning?: boolean;
+  isPaused?: boolean;
 }
 
-export const StepTimeline: React.FC<StepTimelineProps> = ({ steps }) => {
+export const StepTimeline: React.FC<StepTimelineProps> = ({ steps, isRunning = false, isPaused = false }) => {
   const [expandedStep, setExpandedStep] = useState<number | null>(null);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
 
@@ -26,7 +28,15 @@ export const StepTimeline: React.FC<StepTimelineProps> = ({ steps }) => {
       </div>
       <div className="space-y-1.5">
         {steps.map((step) => {
-          const isExpanded = expandedStep === step.stepNumber || step.status === 'running';
+          const isActuallyRunning = isRunning && !isPaused && step.status === 'running' && !step.resultMessage;
+          const isFailed =
+            step.status === 'failed' ||
+            (Boolean(step.resultMessage) &&
+              (step.resultMessage!.includes('failed') ||
+                step.resultMessage!.includes('Could not find') ||
+                step.resultMessage!.includes('Error:')));
+
+          const isExpanded = expandedStep === step.stepNumber || isActuallyRunning;
 
           return (
             <div
@@ -38,12 +48,12 @@ export const StepTimeline: React.FC<StepTimelineProps> = ({ steps }) => {
                 className="p-2 flex items-center justify-between cursor-pointer hover:bg-slate-800/50"
               >
                 <div className="flex items-center gap-2 min-w-0">
-                  {step.status === 'running' ? (
+                  {isActuallyRunning ? (
                     <Loader2 className="h-3.5 w-3.5 text-sky-400 animate-spin shrink-0" />
-                  ) : step.status === 'success' ? (
-                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
-                  ) : (
+                  ) : isFailed ? (
                     <AlertCircle className="h-3.5 w-3.5 text-rose-400 shrink-0" />
+                  ) : (
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
                   )}
 
                   <span className="font-mono font-semibold text-slate-300">
@@ -151,11 +161,11 @@ export const StepTimeline: React.FC<StepTimelineProps> = ({ steps }) => {
               <X className="h-4 w-4" />
             </button>
           </div>
-          <div className="flex-1 flex items-center justify-center overflow-auto">
+          <div className="flex-1 flex items-center justify-center overflow-hidden">
             <img
               src={previewImage}
-              alt="Screenshot full view"
-              className="max-w-full max-h-full rounded-lg shadow-2xl object-contain border border-slate-800"
+              alt="Fullscreen screenshot"
+              className="max-h-full max-w-full object-contain rounded border border-slate-800"
             />
           </div>
         </div>
