@@ -8,6 +8,7 @@ export type ProviderId =
   | 'zai'
   | 'mistral'
   | 'openrouter'
+  | 'demonroute'
   | 'custom';
 
 export interface ModelOption {

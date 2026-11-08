@@ -132,6 +132,21 @@ export const PROVIDERS: Record<ProviderId, ProviderDefinition> = {
       { id: 'mistral/ministral-3b-2512', name: 'Mistral ministral-3b-2512', description: 'Budget model' },
     ],
   },
+  demonroute: {
+    id: 'demonroute',
+    name: 'DemonRoute',
+    description: 'OpenAI-compatible router for 1,700+ open-weight and uncensored models.',
+    defaultBaseUrl: 'https://api.demonroute.com/v1',
+    defaultModel: 'huihui-ai/Huihui-Qwen3.5-27B-abliterated',
+    apiKeyHelpUrl: 'https://demonroute.com',
+    requiresApiKey: true,
+    models: [
+      { id: 'huihui-ai/Huihui-Qwen3.5-27B-abliterated', name: 'Huihui Qwen3.5 27B abliterated', description: '262k context, tool calling', contextWindow: 262144, recommended: true },
+      { id: 'huihui-ai/Huihui-gemma-4-31B-it-abliterated-v2', name: 'Huihui Gemma 4 31B abliterated v2', description: 'Budget, 262k context, tool calling', contextWindow: 262144 },
+      { id: 'TheDrummer/Cydonia-24B-v4.1', name: 'Cydonia 24B v4.1', description: 'Budget, 131k context, tool calling', contextWindow: 131072 },
+      { id: 'NousResearch/Hermes-3-Llama-3.1-8B', name: 'Hermes 3 Llama 3.1 8B', description: 'Free lane, tool calling' },
+    ],
+  },
   custom: {
     id: 'custom',
     name: 'Custom / Local',
@@ -193,6 +208,11 @@ export const DEFAULT_SETTINGS: AllSettings = {
       apiKey: '',
       baseUrl: PROVIDERS.openrouter.defaultBaseUrl,
       selectedModel: PROVIDERS.openrouter.defaultModel,
+    },
+    demonroute: {
+      apiKey: '',
+      baseUrl: PROVIDERS.demonroute.defaultBaseUrl,
+      selectedModel: PROVIDERS.demonroute.defaultModel,
     },
     custom: {
       apiKey: '',

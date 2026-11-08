@@ -27,7 +27,7 @@
 | **Z.ai** | `glm-5.3` | `glm-5.3-flash` |
 | **Mistral** | `mistral-large-4` | `ministral-3b-2512` |
 
-*(Also includes **OpenRouter** and **Custom/Local LLMs** with custom model override).*
+*(Also includes **OpenRouter**, **[DemonRoute](https://demonroute.com/models)** (open-weight and uncensored models over an OpenAI-compatible API), and **Custom/Local LLMs** with custom model override).*
 
 ---
 

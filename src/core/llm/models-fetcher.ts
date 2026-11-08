@@ -34,6 +34,7 @@ export async function fetchLiveProviderModels(
       case 'xai':
       case 'zai':
       case 'mistral':
+      case 'demonroute':
       case 'custom': {
         const baseUrl = (customBaseUrl || PROVIDERS[providerId]?.defaultBaseUrl || '').replace(/\/+$/, '');
         const res = await fetch(`${baseUrl}/models`, {
