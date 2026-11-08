@@ -201,7 +201,7 @@ export const DEFAULT_SETTINGS: AllSettings = {
     },
   },
   agent: {
-    maxSteps: 25,
+    maxBudgetUSD: 0.25,
     showVisualLabels: true,
     autoScroll: true,
     temperature: 0.2,

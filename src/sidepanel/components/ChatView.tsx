@@ -8,7 +8,9 @@ interface ChatViewProps {
   onStartTask: (goal: string) => void;
   onStopTask: () => void;
   currentStep: number;
-  maxSteps: number;
+  maxBudgetUSD: number;
+  liveCostUSD: number;
+  liveTokens: number;
   liveStatus: string;
   steps: StepRecord[];
   finalResult: string | null;
@@ -30,7 +32,9 @@ export const ChatView: React.FC<ChatViewProps> = ({
   onStartTask,
   onStopTask,
   currentStep,
-  maxSteps,
+  maxBudgetUSD,
+  liveCostUSD,
+  liveTokens,
   liveStatus,
   steps,
   finalResult,
@@ -122,9 +126,18 @@ export const ChatView: React.FC<ChatViewProps> = ({
                   {pendingQuestion ? 'Paused: Waiting for your input' : 'Executing Task...'}
                 </span>
               </div>
-              <span className="font-mono text-[11px] text-sky-400 font-bold">
-                Step {currentStep} / {maxSteps}
-              </span>
+              <div className="flex items-center gap-2 font-mono text-[11px]">
+                <span className="text-slate-400">Step {currentStep}</span>
+                <span className="text-slate-600">•</span>
+                <span className="text-emerald-400 font-bold">
+                  ${liveCostUSD.toFixed(3)}
+                  {maxBudgetUSD > 0 ? (
+                    <span className="text-slate-500 font-normal"> / ${maxBudgetUSD.toFixed(2)}</span>
+                  ) : (
+                    <span className="text-slate-500 font-normal"> (No limit)</span>
+                  )}
+                </span>
+              </div>
             </div>
 
             {liveStatus && (

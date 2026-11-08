@@ -21,6 +21,8 @@ export const App: React.FC = () => {
   const [isRunning, setIsRunning] = useState(false);
   const [currentStep, setCurrentStep] = useState(1);
   const [liveStatus, setLiveStatus] = useState('');
+  const [liveCostUSD, setLiveCostUSD] = useState(0);
+  const [liveTokens, setLiveTokens] = useState(0);
   const [steps, setSteps] = useState<StepRecord[]>([]);
   const [finalResult, setFinalResult] = useState<string | null>(null);
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
@@ -54,6 +56,8 @@ export const App: React.FC = () => {
     setSteps([]);
     setFinalResult(null);
     setCurrentStep(1);
+    setLiveCostUSD(0);
+    setLiveTokens(0);
     setPendingQuestion(null);
     setLiveStatus('Initializing agent...');
 
@@ -67,6 +71,10 @@ export const App: React.FC = () => {
       onStepComplete: (step) => {
         setSteps((prev) => [...prev, step]);
         recordedSteps.push(step);
+      },
+      onCostUpdate: (cost, tokens) => {
+        setLiveCostUSD(cost);
+        setLiveTokens(tokens);
       },
       onLog: (msg) => {
         setLiveStatus(msg);
@@ -169,7 +177,9 @@ export const App: React.FC = () => {
             onStartTask={handleStartTask}
             onStopTask={handleStopTask}
             currentStep={currentStep}
-            maxSteps={settings.agent.maxSteps}
+            maxBudgetUSD={settings.agent.maxBudgetUSD}
+            liveCostUSD={liveCostUSD}
+            liveTokens={liveTokens}
             liveStatus={liveStatus}
             steps={steps}
             finalResult={finalResult}

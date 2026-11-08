@@ -1,14 +1,17 @@
 import { ChatMessage, LLMCompletionResponse, ToolDefinition } from '../types';
+import { fetchWithRetry } from '../http';
+import { estimateCostUSD } from '../pricing';
 
 export async function callAnthropic(
   apiKey: string,
   model: string,
   messages: ChatMessage[],
   tools: ToolDefinition[],
-  temperature = 0.2
+  temperature = 0.2,
+  onStatusNotice?: (msg: string) => void
 ): Promise<LLMCompletionResponse> {
   if (!apiKey) {
-    throw new Error('Anthropic Claude API key is required. Please set it in Settings.');
+    throw new Error('Anthropic API key is required. Please set it in Settings.');
   }
 
   const systemMessage = messages.find((m) => m.role === 'system');
@@ -65,7 +68,7 @@ export async function callAnthropic(
     },
   }));
 
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
+  const res = await fetchWithRetry('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -81,11 +84,12 @@ export async function callAnthropic(
       messages: formattedMessages,
       tools: formattedTools.length > 0 ? formattedTools : undefined,
     }),
+    onRetryNotice: onStatusNotice,
   });
 
   if (!res.ok) {
     const errorText = await res.text();
-    throw new Error(`Anthropic Claude API error (${res.status}): ${errorText}`);
+    throw new Error(`Anthropic API error (${res.status}): ${errorText}`);
   }
 
   const json = await res.json();
@@ -106,14 +110,19 @@ export async function callAnthropic(
     }
   }
 
+  const promptTokens = json.usage?.input_tokens || 0;
+  const completionTokens = json.usage?.output_tokens || 0;
+  const estimatedCost = estimateCostUSD(model, promptTokens, completionTokens);
+
   return {
     text,
     toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
     rawResponse: json,
-    usage: json.usage ? {
-      promptTokens: json.usage.input_tokens,
-      completionTokens: json.usage.output_tokens,
-      totalTokens: (json.usage.input_tokens || 0) + (json.usage.output_tokens || 0),
-    } : undefined,
+    usage: {
+      promptTokens,
+      completionTokens,
+      totalTokens: promptTokens + completionTokens,
+    },
+    estimatedCostUSD: estimatedCost,
   };
 }

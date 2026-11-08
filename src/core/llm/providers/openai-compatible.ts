@@ -1,4 +1,6 @@
 import { ChatMessage, LLMCompletionResponse, ToolDefinition } from '../types';
+import { fetchWithRetry } from '../http';
+import { estimateCostUSD } from '../pricing';
 
 export interface OpenAICompatibleOptions {
   apiKey?: string;
@@ -9,6 +11,7 @@ export interface OpenAICompatibleOptions {
   temperature?: number;
   customHeaders?: Record<string, string>;
   providerName: string;
+  onStatusNotice?: (msg: string) => void;
 }
 
 export async function callOpenAICompatible({
@@ -20,6 +23,7 @@ export async function callOpenAICompatible({
   temperature = 0.2,
   customHeaders = {},
   providerName,
+  onStatusNotice,
 }: OpenAICompatibleOptions): Promise<LLMCompletionResponse> {
   const cleanBaseUrl = baseUrl.replace(/\/+$/, '');
   const url = cleanBaseUrl.endsWith('/chat/completions')
@@ -72,7 +76,7 @@ export async function callOpenAICompatible({
     },
   }));
 
-  const res = await fetch(url, {
+  const res = await fetchWithRetry(url, {
     method: 'POST',
     headers,
     body: JSON.stringify({
@@ -81,6 +85,7 @@ export async function callOpenAICompatible({
       tools: formattedTools.length > 0 ? formattedTools : undefined,
       temperature,
     }),
+    onRetryNotice: onStatusNotice,
   });
 
   if (!res.ok) {
@@ -108,14 +113,19 @@ export async function callOpenAICompatible({
     };
   });
 
+  const promptTokens = json.usage?.prompt_tokens || 0;
+  const completionTokens = json.usage?.completion_tokens || 0;
+  const estimatedCost = estimateCostUSD(model, promptTokens, completionTokens);
+
   return {
     text: choice.message?.content || '',
     toolCalls: toolCalls && toolCalls.length > 0 ? toolCalls : undefined,
     rawResponse: json,
-    usage: json.usage ? {
-      promptTokens: json.usage.prompt_tokens,
-      completionTokens: json.usage.completion_tokens,
-      totalTokens: json.usage.total_tokens,
-    } : undefined,
+    usage: {
+      promptTokens,
+      completionTokens,
+      totalTokens: json.usage?.total_tokens || (promptTokens + completionTokens),
+    },
+    estimatedCostUSD: estimatedCost,
   };
 }

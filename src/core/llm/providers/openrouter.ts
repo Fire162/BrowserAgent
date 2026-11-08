@@ -1,11 +1,14 @@
 import { ChatMessage, LLMCompletionResponse, ToolDefinition, ModelOption } from '../types';
+import { fetchWithRetry } from '../http';
+import { estimateCostUSD } from '../pricing';
 
-export async function fetchOpenRouterModels(apiKey: string): Promise<ModelOption[]> {
+export async function fetchOpenRouterModels(apiKey?: string): Promise<ModelOption[]> {
   try {
-    const res = await fetch('https://openrouter.ai/api/v1/models', {
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-      },
+    const headers: Record<string, string> = {};
+    if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+
+    const res = await fetchWithRetry('https://openrouter.ai/api/v1/models', {
+      headers,
     });
 
     if (!res.ok) {
@@ -22,7 +25,12 @@ export async function fetchOpenRouterModels(apiKey: string): Promise<ModelOption
       name: m.name || m.id,
       description: m.description ? m.description.slice(0, 100) + '...' : undefined,
       contextWindow: m.context_length,
-      recommended: ['anthropic/claude-3.7-sonnet', 'deepseek/deepseek-r1', 'google/gemini-2.0-flash-001'].includes(m.id),
+      recommended: [
+        'openai/gpt-6-astra',
+        'anthropic/claude-opus-5-5',
+        'google/gemini-4-argon',
+        'deepseek/deepseek-v4-pro',
+      ].includes(m.id),
     }));
   } catch (err) {
     console.warn('[OpenRouter] Model fetch failed, using fallback:', err);
@@ -35,7 +43,8 @@ export async function callOpenRouter(
   model: string,
   messages: ChatMessage[],
   tools: ToolDefinition[],
-  temperature = 0.2
+  temperature = 0.2,
+  onStatusNotice?: (msg: string) => void
 ): Promise<LLMCompletionResponse> {
   if (!apiKey) {
     throw new Error('OpenRouter API key is required. Please set it in Settings.');
@@ -78,12 +87,12 @@ export async function callOpenRouter(
     },
   }));
 
-  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+  const res = await fetchWithRetry('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${apiKey}`,
-      'HTTP-Referer': 'https://github.com/browseragent/browseragent',
+      'HTTP-Referer': 'https://github.com/Fire162/BrowserAgent',
       'X-Title': 'BrowserAgent Extension',
     },
     body: JSON.stringify({
@@ -92,6 +101,7 @@ export async function callOpenRouter(
       tools: formattedTools.length > 0 ? formattedTools : undefined,
       temperature,
     }),
+    onRetryNotice: onStatusNotice,
   });
 
   if (!res.ok) {
@@ -119,14 +129,19 @@ export async function callOpenRouter(
     };
   });
 
+  const promptTokens = json.usage?.prompt_tokens || 0;
+  const completionTokens = json.usage?.completion_tokens || 0;
+  const estimatedCost = estimateCostUSD(model, promptTokens, completionTokens, json.usage?.total_cost);
+
   return {
     text: choice.message?.content || '',
     toolCalls: toolCalls && toolCalls.length > 0 ? toolCalls : undefined,
     rawResponse: json,
-    usage: json.usage ? {
-      promptTokens: json.usage.prompt_tokens,
-      completionTokens: json.usage.completion_tokens,
-      totalTokens: json.usage.total_tokens,
-    } : undefined,
+    usage: {
+      promptTokens,
+      completionTokens,
+      totalTokens: json.usage?.total_tokens || (promptTokens + completionTokens),
+    },
+    estimatedCostUSD: estimatedCost,
   };
 }

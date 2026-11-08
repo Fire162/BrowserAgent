@@ -337,21 +337,58 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       <section className="bg-slate-900/80 border border-slate-800 rounded-xl p-3.5 space-y-4">
         <h3 className="font-semibold text-white text-sm">Agent Settings</h3>
 
-        {/* Max Steps */}
-        <div className="space-y-1">
+        {/* Task Price Budget (USD) */}
+        <div className="space-y-2">
           <div className="flex justify-between text-xs">
-            <span className="text-slate-300">Max Steps per Task</span>
-            <span className="font-mono text-sky-400">{settings.agent.maxSteps} steps</span>
+            <span className="text-slate-300 font-medium">Task Price Budget</span>
+            <span className="font-mono text-emerald-400 font-bold">
+              {settings.agent.maxBudgetUSD > 0
+                ? `$${settings.agent.maxBudgetUSD.toFixed(2)} USD`
+                : 'Unlimited'}
+            </span>
           </div>
-          <input
-            type="range"
-            min="5"
-            max="50"
-            step="1"
-            value={settings.agent.maxSteps}
-            onChange={(e) => onUpdateAgent({ maxSteps: parseInt(e.target.value, 10) })}
-            className="w-full accent-sky-500 cursor-pointer"
-          />
+
+          <div className="grid grid-cols-5 gap-1 text-[11px]">
+            {[
+              { label: '$0.05', val: 0.05 },
+              { label: '$0.10', val: 0.10 },
+              { label: '$0.25', val: 0.25 },
+              { label: '$0.50', val: 0.50 },
+              { label: 'None', val: 0 },
+            ].map((b) => (
+              <button
+                key={b.val}
+                type="button"
+                onClick={() => onUpdateAgent({ maxBudgetUSD: b.val })}
+                className={`py-1 rounded border text-center font-mono transition-colors ${
+                  settings.agent.maxBudgetUSD === b.val
+                    ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300 font-semibold'
+                    : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:text-white'
+                }`}
+              >
+                {b.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex items-center gap-2 pt-0.5">
+            <span className="text-[11px] text-slate-400 shrink-0">Custom ($):</span>
+            <input
+              type="number"
+              min="0"
+              step="0.05"
+              value={settings.agent.maxBudgetUSD || ''}
+              onChange={(e) => {
+                const num = parseFloat(e.target.value);
+                onUpdateAgent({ maxBudgetUSD: isNaN(num) || num < 0 ? 0 : num });
+              }}
+              placeholder="0 for unlimited"
+              className="flex-1 bg-slate-950 border border-slate-800 rounded px-2 py-1 text-xs font-mono text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500"
+            />
+          </div>
+          <p className="text-[10px] text-slate-400 leading-normal">
+            No fixed step limits. If model API usage reaches this spending cap, the agent will pause and request confirmation before spending more.
+          </p>
         </div>
 
         {/* Temperature */}

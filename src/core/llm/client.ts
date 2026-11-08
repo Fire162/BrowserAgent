@@ -8,7 +8,8 @@ import { callOpenAICompatible } from './providers/openai-compatible';
 export async function executeLLMCall(
   settings: AllSettings,
   messages: ChatMessage[],
-  tools: ToolDefinition[]
+  tools: ToolDefinition[],
+  onStatusNotice?: (msg: string) => void
 ): Promise<LLMCompletionResponse> {
   const providerId = settings.activeProvider;
   const providerConfig = settings.providers[providerId];
@@ -24,13 +25,13 @@ export async function executeLLMCall(
 
   switch (providerId) {
     case 'openrouter':
-      return callOpenRouter(apiKey, model, messages, tools, temperature);
+      return callOpenRouter(apiKey, model, messages, tools, temperature, onStatusNotice);
 
     case 'google':
-      return callGemini(apiKey, model, messages, tools, temperature);
+      return callGemini(apiKey, model, messages, tools, temperature, onStatusNotice);
 
     case 'anthropic':
-      return callAnthropic(apiKey, model, messages, tools, temperature);
+      return callAnthropic(apiKey, model, messages, tools, temperature, onStatusNotice);
 
     case 'openai':
       return callOpenAICompatible({
@@ -41,6 +42,7 @@ export async function executeLLMCall(
         tools,
         temperature,
         providerName: 'OpenAI',
+        onStatusNotice,
       });
 
     case 'deepseek':
@@ -52,6 +54,7 @@ export async function executeLLMCall(
         tools,
         temperature,
         providerName: 'DeepSeek',
+        onStatusNotice,
       });
 
     case 'alibaba':
@@ -62,7 +65,8 @@ export async function executeLLMCall(
         messages,
         tools,
         temperature,
-        providerName: 'Alibaba',
+        providerName: 'Alibaba Qwen',
+        onStatusNotice,
       });
 
     case 'xai':
@@ -74,6 +78,7 @@ export async function executeLLMCall(
         tools,
         temperature,
         providerName: 'xAI',
+        onStatusNotice,
       });
 
     case 'zai':
@@ -85,6 +90,7 @@ export async function executeLLMCall(
         tools,
         temperature,
         providerName: 'Z.ai',
+        onStatusNotice,
       });
 
     case 'mistral':
@@ -96,6 +102,7 @@ export async function executeLLMCall(
         tools,
         temperature,
         providerName: 'Mistral',
+        onStatusNotice,
       });
 
     case 'custom':
@@ -107,6 +114,7 @@ export async function executeLLMCall(
         tools,
         temperature,
         providerName: 'Custom Endpoint',
+        onStatusNotice,
       });
 
     default:

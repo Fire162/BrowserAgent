@@ -1,17 +1,19 @@
 import { ChatMessage, LLMCompletionResponse, ToolDefinition } from '../types';
+import { fetchWithRetry } from '../http';
+import { estimateCostUSD } from '../pricing';
 
 export async function callGemini(
   apiKey: string,
   model: string,
   messages: ChatMessage[],
   tools: ToolDefinition[],
-  temperature = 0.2
+  temperature = 0.2,
+  onStatusNotice?: (msg: string) => void
 ): Promise<LLMCompletionResponse> {
   if (!apiKey) {
-    throw new Error('Google Gemini API key is required. Please set it in Settings.');
+    throw new Error('Google API key is required. Please set it in Settings.');
   }
 
-  // Separate system instruction from messages
   const systemMessage = messages.find((m) => m.role === 'system');
   const chatMessages = messages.filter((m) => m.role !== 'system');
 
@@ -83,23 +85,24 @@ export async function callGemini(
   const cleanModel = model.replace(/^models\//, '');
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${cleanModel}:generateContent?key=${apiKey}`;
 
-  const res = await fetch(url, {
+  const res = await fetchWithRetry(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(payload),
+    onRetryNotice: onStatusNotice,
   });
 
   if (!res.ok) {
     const errorText = await res.text();
-    throw new Error(`Google Gemini API error (${res.status}): ${errorText}`);
+    throw new Error(`Google API error (${res.status}): ${errorText}`);
   }
 
   const json = await res.json();
   const candidate = json.candidates?.[0];
   if (!candidate) {
-    throw new Error('Gemini returned an empty candidate list.');
+    throw new Error('Google Gemini returned an empty candidate list.');
   }
 
   const parts = candidate.content?.parts || [];
@@ -118,14 +121,19 @@ export async function callGemini(
     }
   });
 
+  const promptTokens = json.usageMetadata?.promptTokenCount || 0;
+  const completionTokens = json.usageMetadata?.candidatesTokenCount || 0;
+  const estimatedCost = estimateCostUSD(model, promptTokens, completionTokens);
+
   return {
     text,
     toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
     rawResponse: json,
-    usage: json.usageMetadata ? {
-      promptTokens: json.usageMetadata.promptTokenCount,
-      completionTokens: json.usageMetadata.candidatesTokenCount,
-      totalTokens: json.usageMetadata.totalTokenCount,
-    } : undefined,
+    usage: {
+      promptTokens,
+      completionTokens,
+      totalTokens: json.usageMetadata?.totalTokenCount || (promptTokens + completionTokens),
+    },
+    estimatedCostUSD: estimatedCost,
   };
 }

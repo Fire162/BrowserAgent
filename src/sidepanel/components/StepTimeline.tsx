@@ -60,8 +60,15 @@ export const StepTimeline: React.FC<StepTimelineProps> = ({ steps }) => {
                   )}
                 </div>
 
-                <div className="text-slate-500 hover:text-slate-300 ml-2">
-                  {isExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                <div className="flex items-center gap-1.5 ml-2 shrink-0">
+                  {step.costUSD !== undefined && step.costUSD > 0 && (
+                    <span className="text-[10px] text-emerald-400 font-mono bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
+                      +${step.costUSD.toFixed(4)}
+                    </span>
+                  )}
+                  <div className="text-slate-500 hover:text-slate-300">
+                    {isExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                  </div>
                 </div>
               </div>
 

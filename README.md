@@ -35,9 +35,11 @@
 
 * 🖥️ **Persistent Chrome Side Panel**: Lives right next to your active webpage using `chrome.sidePanel`—stays open as you navigate tabs.
 * 🔑 **Bring Your Own Key (BYOK)**: Store API keys locally in `chrome.storage.local`. Keys and browser data go directly to LLM endpoints with zero middleman servers.
+* 💰 **User-Configurable Price Budget (No Fixed Step Limits)**: Runs continuously without arbitrary 25-step caps. You set a spending budget (e.g. `$0.05`, `$0.25`, or Unlimited); the agent tracks live token costs and pauses for confirmation before exceeding it.
+* 🛡️ **Resilient 429 Rate-Limit Handling**: Built-in exponential backoff with jitter and `Retry-After` header parsing automatically handles API rate limits without failing your task.
 * 🎯 **Intelligent Visual Labeling**: Numbers interactive elements on screen with high-contrast badges (`[1]`, `[2]`, `[3]...`), allowing LLMs to interact with elements without fragile CSS selectors.
 * 🛡️ **Realistic DOM Interaction**: Dispatches full synthetic event sequences (`pointerdown`, `mousedown`, `focus`, `click`, realistic keyboard strokes, smooth scrolling, and native dialog interception).
-* 📊 **Live Step Timeline**: Watch the agent observe, reason, and execute actions with real-time feedback and progress tracking.
+* 📊 **Live Step & Cost Timeline**: Watch the agent observe, reason, and execute actions with real-time feedback, per-step costs, and progress tracking.
 
 ---
 

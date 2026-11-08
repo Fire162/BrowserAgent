@@ -10,6 +10,7 @@ export interface StepRecord {
   resultMessage?: string;
   timestamp: number;
   status: 'running' | 'success' | 'failed';
+  costUSD?: number;
 }
 
 export interface AgentRunCallbacks {
@@ -19,6 +20,7 @@ export interface AgentRunCallbacks {
   onFinish?: (summary: string) => void;
   onError?: (error: Error) => void;
   onAskUser?: (question: string) => Promise<string>;
+  onCostUpdate?: (costUSD: number, totalTokens: number) => void;
 }
 
 export class AgentExecution {
@@ -112,8 +114,11 @@ export class AgentExecution {
     let tabId = await this.getActiveTabId();
     await this.ensureContentScript(tabId);
 
-    const maxSteps = this.settings.agent.maxSteps || 25;
+    let maxBudgetUSD = this.settings.agent.maxBudgetUSD ?? 0.25;
     const showVisualLabels = this.settings.agent.showVisualLabels ?? true;
+
+    let accumulatedCostUSD = 0;
+    let accumulatedTokens = 0;
 
     const messages: ChatMessage[] = [
       {
@@ -129,10 +134,40 @@ export class AgentExecution {
     let stepCounter = 1;
 
     try {
-      while (stepCounter <= maxSteps) {
+      // Run continuously until task completion, user abort, or budget ceiling
+      while (true) {
         if (this.aborted) {
           await this.clearBadges(tabId);
           return 'Execution aborted by user.';
+        }
+
+        // Budget check: If budget cap is set and exceeded, pause and ask user
+        if (maxBudgetUSD > 0 && accumulatedCostUSD >= maxBudgetUSD) {
+          this.callbacks.onLog?.(`Budget limit reached ($${maxBudgetUSD.toFixed(2)}). Asking for approval...`);
+          
+          let budgetPrompt = `Budget cap of $${maxBudgetUSD.toFixed(2)} reached (Current spend: $${accumulatedCostUSD.toFixed(4)}). Would you like to add more budget and proceed, or conclude the task?`;
+          let userResponse = 'continue';
+
+          if (this.callbacks.onAskUser) {
+            userResponse = await this.callbacks.onAskUser(budgetPrompt);
+          }
+
+          if (this.aborted) {
+            await this.clearBadges(tabId);
+            return 'Execution aborted by user.';
+          }
+
+          const lower = userResponse.toLowerCase();
+          if (lower.includes('stop') || lower.includes('cancel') || lower.includes('finish') || lower.includes('conclude')) {
+            await this.clearBadges(tabId);
+            const budgetStopMsg = `Task halted at budget limit of $${maxBudgetUSD.toFixed(2)} (Spent: $${accumulatedCostUSD.toFixed(4)}).`;
+            this.callbacks.onFinish?.(budgetStopMsg);
+            return budgetStopMsg;
+          }
+
+          // User approved continuing: bump budget ceiling by $0.25
+          maxBudgetUSD += 0.25;
+          this.callbacks.onLog?.(`Budget extended to $${maxBudgetUSD.toFixed(2)}. Resuming...`);
         }
 
         this.callbacks.onStepStart?.(stepCounter);
@@ -141,7 +176,7 @@ export class AgentExecution {
         tabId = await this.getActiveTabId();
         await this.ensureContentScript(tabId);
 
-        // 1. Observe
+        // 1. Observe DOM
         let snapshot: any;
         try {
           snapshot = await this.getPageSnapshot(tabId, showVisualLabels);
@@ -168,9 +203,24 @@ What is your next action?`;
           content: observationContent,
         });
 
-        // 2. Reason (Call LLM)
+        // 2. Reason (Call LLM with resilient 429 backoff)
         this.callbacks.onLog?.(`Thinking with ${this.settings.activeProvider}...`);
-        const response = await executeLLMCall(this.settings, messages, AGENT_TOOLS);
+        
+        const response = await executeLLMCall(
+          this.settings,
+          messages,
+          AGENT_TOOLS,
+          (retryNotice) => this.callbacks.onLog?.(retryNotice)
+        );
+
+        // Track spending and tokens
+        if (response.estimatedCostUSD) {
+          accumulatedCostUSD += response.estimatedCostUSD;
+        }
+        if (response.usage?.totalTokens) {
+          accumulatedTokens += response.usage.totalTokens;
+        }
+        this.callbacks.onCostUpdate?.(accumulatedCostUSD, accumulatedTokens);
 
         const thought = response.text?.trim() || '';
         const toolCalls = response.toolCalls || [];
@@ -182,6 +232,7 @@ What is your next action?`;
             timestamp: Date.now(),
             status: 'success',
             resultMessage: 'Agent reflected without dispatching a tool.',
+            costUSD: response.estimatedCostUSD,
           };
           this.callbacks.onStepComplete?.(stepRecord);
 
@@ -202,6 +253,7 @@ What is your next action?`;
           toolCall: primaryTool,
           timestamp: Date.now(),
           status: 'running',
+          costUSD: response.estimatedCostUSD,
         };
 
         // 3. Act
@@ -285,11 +337,6 @@ What is your next action?`;
         await this.sleep(800);
         stepCounter++;
       }
-
-      await this.clearBadges(tabId);
-      const limitReached = `Reached maximum step limit (${maxSteps}). Please inspect results or continue with a follow-up prompt.`;
-      this.callbacks.onFinish?.(limitReached);
-      return limitReached;
     } catch (err: any) {
       await this.clearBadges(tabId);
       this.callbacks.onError?.(err);

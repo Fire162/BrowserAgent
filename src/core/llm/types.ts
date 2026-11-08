@@ -40,7 +40,7 @@ export interface AllSettings {
   activeProvider: ProviderId;
   providers: Record<ProviderId, ProviderSettings>;
   agent: {
-    maxSteps: number;
+    maxBudgetUSD: number; // 0 for unlimited, or e.g. 0.10, 0.25, 0.50
     showVisualLabels: boolean;
     autoScroll: boolean;
     temperature: number;
@@ -71,6 +71,7 @@ export interface LLMCompletionResponse {
     completionTokens?: number;
     totalTokens?: number;
   };
+  estimatedCostUSD?: number;
 }
 
 export interface ToolDefinition {
