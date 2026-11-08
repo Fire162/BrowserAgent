@@ -1,6 +1,22 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Pause, Play, Sparkles, Copy, Check, Terminal, Compass, HelpCircle, ArrowRight, Navigation } from 'lucide-react';
-import { StepRecord } from '../../core/agent/loop';
+import {
+  Send,
+  Pause,
+  Play,
+  Sparkles,
+  Copy,
+  Check,
+  Terminal,
+  Compass,
+  HelpCircle,
+  ArrowRight,
+  Navigation,
+  Eye,
+  Plus,
+  Download,
+  FileText,
+} from 'lucide-react';
+import { StepRecord, TargetTabInfo } from '../../core/agent/loop';
 import { StepTimeline } from './StepTimeline';
 import { MarkdownViewer } from './MarkdownViewer';
 
@@ -22,6 +38,9 @@ interface ChatViewProps {
   activeModel: string;
   pendingQuestion?: string | null;
   onAnswerQuestion?: (answer: string) => void;
+  targetTab?: TargetTabInfo | null;
+  onFocusTab?: () => void;
+  onCreateNewTab?: () => void;
 }
 
 const QUICK_PROMPTS = [
@@ -49,6 +68,9 @@ export const ChatView: React.FC<ChatViewProps> = ({
   activeModel,
   pendingQuestion,
   onAnswerQuestion,
+  targetTab,
+  onFocusTab,
+  onCreateNewTab,
 }) => {
   const [inputText, setInputText] = useState('');
   const [answerInput, setAnswerInput] = useState('');
@@ -62,8 +84,8 @@ export const ChatView: React.FC<ChatViewProps> = ({
     }
   }, [steps, liveStatus, finalResult, pendingQuestion, isPaused]);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     const trimmed = inputText.trim();
     if (!trimmed) return;
 
@@ -102,10 +124,88 @@ export const ChatView: React.FC<ChatViewProps> = ({
     }
   };
 
+  const handleDownloadMarkdown = () => {
+    if (!finalResult) return;
+    const blob = new Blob([finalResult], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `browseragent-summary-${Date.now()}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleDownloadJSON = () => {
+    if (!finalResult) return;
+    const data = {
+      timestamp: new Date().toISOString(),
+      provider: activeProvider,
+      model: activeModel,
+      totalCostUSD: liveCostUSD,
+      totalTokens: liveTokens,
+      stepsCount: steps.length,
+      summary: finalResult,
+      steps: steps.map((s) => ({
+        step: s.stepNumber,
+        thought: s.thought,
+        toolCalls: s.toolCalls || (s.toolCall ? [s.toolCall] : []),
+        result: s.resultMessage,
+      })),
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `browseragent-report-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const budgetRatio = maxBudgetUSD > 0 ? liveCostUSD / maxBudgetUSD : 0;
+  const budgetPercent = Math.min(100, Math.round(budgetRatio * 100));
+
   return (
     <div className="flex-1 flex flex-col h-[calc(100vh-85px)] overflow-hidden">
+      {/* Target Tab Binding Indicator */}
+      <div className="mx-3.5 mt-2 mb-1 bg-slate-900/90 border border-slate-800 rounded-xl px-3 py-1.5 flex items-center justify-between text-[11px] shadow-sm">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          <span className="h-2 w-2 rounded-full bg-emerald-400 shrink-0 animate-pulse" />
+          <span className="font-mono text-sky-400 shrink-0 font-medium">
+            {targetTab ? `Tab #${targetTab.id}` : 'Detecting...'}
+          </span>
+          <span className="text-slate-300 truncate" title={targetTab?.title || targetTab?.url}>
+            {targetTab?.title || targetTab?.url || 'No active tab selected'}
+          </span>
+        </div>
+
+        <div className="flex items-center gap-1.5 shrink-0 ml-2">
+          {targetTab && onFocusTab && (
+            <button
+              type="button"
+              onClick={onFocusTab}
+              title="Bring assigned target tab to front"
+              className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-sky-300 text-[10px] flex items-center gap-1 transition-colors border border-slate-700/60 font-medium"
+            >
+              <Eye className="h-3 w-3" />
+              <span>Focus Tab</span>
+            </button>
+          )}
+          {!isRunning && onCreateNewTab && (
+            <button
+              type="button"
+              onClick={onCreateNewTab}
+              title="Open a brand new tab for the agent"
+              className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] flex items-center gap-1 transition-colors border border-slate-700/60"
+            >
+              <Plus className="h-3 w-3" />
+              <span>New Tab</span>
+            </button>
+          )}
+        </div>
+      </div>
+
       {/* Scrollable Timeline & Results View */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto p-3.5 space-y-4">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto p-3.5 space-y-4 pt-1">
         {steps.length === 0 && !finalResult && !pendingQuestion && (
           <div className="space-y-4 pt-2">
             <div className="text-center py-6 px-4 bg-slate-900/40 border border-slate-800/80 rounded-2xl">
@@ -114,19 +214,21 @@ export const ChatView: React.FC<ChatViewProps> = ({
               </div>
               <h2 className="text-sm font-semibold text-white">BrowserAgent Ready</h2>
               <p className="text-xs text-slate-400 mt-1 max-w-xs mx-auto leading-relaxed">
-                Describe any task on the active tab. BrowserAgent will inspect elements, reason, click, type, and complete it autonomously.
+                Describe any task. BrowserAgent operates directly on the locked tab so you can multi-task on other tabs without disruption.
               </p>
               <div className="mt-2.5 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-800/70 border border-slate-700/50 text-[10px] text-slate-300">
                 <span>Model:</span>
                 <span className="text-sky-300 font-mono">{activeModel.split('/').pop()}</span>
+                <span className="text-slate-500">•</span>
+                <span>BYOK</span>
               </div>
             </div>
 
-            {/* Quick Inspiration Prompts */}
-            <div className="space-y-1.5">
-              <span className="text-[11px] font-medium text-slate-400 flex items-center gap-1">
+            {/* Quick Starters */}
+            <div className="space-y-2">
+              <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5 px-1">
                 <Sparkles className="h-3 w-3 text-sky-400" />
-                <span>Quick Prompts:</span>
+                <span>Quick Starters</span>
               </span>
               <div className="space-y-1.5">
                 {QUICK_PROMPTS.map((prompt, i) => (
@@ -148,7 +250,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
 
         {/* Live Running Status Banner */}
         {isRunning && (
-          <div className="bg-sky-500/10 border border-sky-500/30 rounded-xl p-3 space-y-2">
+          <div className="bg-sky-500/10 border border-sky-500/30 rounded-xl p-3 space-y-2.5">
             <div className="flex items-center justify-between text-xs">
               <div className="flex items-center gap-2">
                 <div className="h-2 w-2 rounded-full bg-sky-400 animate-ping" />
@@ -157,7 +259,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
                     ? 'Paused: Waiting for your input'
                     : isPaused
                     ? 'Paused: Awaiting follow-up'
-                    : 'Executing Task...'}
+                    : 'Executing Task on Assigned Tab...'}
                 </span>
               </div>
               <div className="flex items-center gap-2 font-mono text-[11px]">
@@ -173,6 +275,24 @@ export const ChatView: React.FC<ChatViewProps> = ({
                 </span>
               </div>
             </div>
+
+            {/* Visual Budget Progress Bar */}
+            {maxBudgetUSD > 0 && (
+              <div className="space-y-1">
+                <div className="w-full bg-slate-900 rounded-full h-1.5 overflow-hidden border border-slate-800">
+                  <div
+                    className={`h-full transition-all duration-300 ${
+                      budgetPercent >= 90
+                        ? 'bg-rose-500'
+                        : budgetPercent >= 70
+                        ? 'bg-amber-400'
+                        : 'bg-emerald-400'
+                    }`}
+                    style={{ width: `${budgetPercent}%` }}
+                  />
+                </div>
+              </div>
+            )}
 
             {liveStatus && (
               <div className="flex items-center gap-2 text-xs text-slate-300 font-mono bg-slate-950/60 px-2.5 py-1.5 rounded-lg border border-slate-800">
@@ -244,7 +364,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
         {/* Action Steps Timeline */}
         <StepTimeline steps={steps} />
 
-        {/* Final Result Card */}
+        {/* Final Result Card with Data Export */}
         {finalResult && (
           <div className="bg-gradient-to-b from-slate-900 to-slate-950 border border-emerald-500/30 rounded-xl p-3.5 space-y-2.5 shadow-lg">
             <div className="flex items-center justify-between border-b border-slate-800 pb-2">
@@ -252,13 +372,31 @@ export const ChatView: React.FC<ChatViewProps> = ({
                 <Check className="h-4 w-4" />
                 <span>Task Summary</span>
               </div>
-              <button
-                onClick={handleCopyResult}
-                className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-white px-2 py-0.5 rounded bg-slate-800/80 hover:bg-slate-700 transition-colors"
-              >
-                {copied ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
-                <span>{copied ? 'Copied' : 'Copy'}</span>
-              </button>
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={handleDownloadMarkdown}
+                  title="Download report as Markdown file (.md)"
+                  className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-white px-2 py-0.5 rounded bg-slate-800/80 hover:bg-slate-700 transition-colors"
+                >
+                  <FileText className="h-3 w-3 text-sky-400" />
+                  <span>.MD</span>
+                </button>
+                <button
+                  onClick={handleDownloadJSON}
+                  title="Download structured data and steps as JSON (.json)"
+                  className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-white px-2 py-0.5 rounded bg-slate-800/80 hover:bg-slate-700 transition-colors"
+                >
+                  <Download className="h-3 w-3 text-emerald-400" />
+                  <span>.JSON</span>
+                </button>
+                <button
+                  onClick={handleCopyResult}
+                  className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-white px-2 py-0.5 rounded bg-slate-800/80 hover:bg-slate-700 transition-colors"
+                >
+                  {copied ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+                  <span>{copied ? 'Copied' : 'Copy'}</span>
+                </button>
+              </div>
             </div>
             <div className="bg-slate-950/60 p-3 rounded-lg border border-slate-800/80">
               <MarkdownViewer content={finalResult} />
@@ -284,77 +422,83 @@ export const ChatView: React.FC<ChatViewProps> = ({
               onChange={(e) => setInputText(e.target.value)}
               placeholder={
                 isRunning && !isPaused
-                  ? "Steer agent mid-flight (e.g. 'click the blue button instead', 'scroll down')..."
+                  ? "Steer agent mid-flight (Ctrl+Enter to send)..."
                   : isPaused
-                  ? "Task paused. Enter follow-up instructions to resume..."
-                  : "Give a task on this tab (e.g. Find flights to NYC, extract data, click button)..."
+                  ? "Task paused. Enter follow-up instructions (Ctrl+Enter to resume)..."
+                  : "Give a task on assigned tab (Ctrl+Enter to start)..."
               }
               rows={2}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
+                if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
                   e.preventDefault();
-                  handleSubmit(e);
+                  handleSubmit();
+                } else if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSubmit();
                 }
               }}
-              className="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 resize-none"
+              className="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 resize-none font-sans"
             />
           </div>
 
           <div className="flex items-center justify-between">
-            <span className="text-[10px] text-slate-500">
-              {isRunning && !isPaused ? (
-                <span className="text-sky-400 flex items-center gap-1">
-                  <Navigation className="h-3 w-3" />
-                  <span>Send mid-flight steering advice</span>
-                </span>
-              ) : isPaused ? (
-                <span className="text-amber-400">Task paused • Enter follow-up to resume</span>
-              ) : (
-                <span>Press <kbd className="bg-slate-800 px-1 rounded text-slate-400">Enter</kbd> to run</span>
-              )}
-            </span>
-
-            <div className="flex items-center gap-2">
-              {isRunning && !isPaused && (
+            <div className="flex items-center gap-1.5">
+              {isRunning ? (
                 <button
                   type="button"
                   onClick={onPauseTask}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600/80 hover:bg-amber-600 text-white rounded-lg text-xs font-semibold shadow-sm transition-all"
-                  title="Pause execution without losing state"
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all ${
+                    isPaused
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30'
+                      : 'bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700'
+                  }`}
                 >
-                  <Pause className="h-3.5 w-3.5 fill-current" />
-                  <span>Pause</span>
+                  <Pause className="h-3 w-3" />
+                  <span>{isPaused ? 'Paused' : 'Pause'}</span>
                 </button>
-              )}
+              ) : null}
 
-              {isRunning && !isPaused ? (
+              {isPaused && (
                 <button
-                  type="submit"
-                  disabled={!inputText.trim()}
-                  className="flex items-center gap-1.5 px-3.5 py-1.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-40 text-white rounded-lg text-xs font-semibold shadow-sm transition-all"
+                  type="button"
+                  onClick={() => handleSubmit()}
+                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all shadow-md shadow-emerald-500/20"
                 >
-                  <Navigation className="h-3.5 w-3.5" />
-                  <span>Steer</span>
-                </button>
-              ) : isPaused ? (
-                <button
-                  type="submit"
-                  disabled={!inputText.trim()}
-                  className="flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white rounded-lg text-xs font-semibold shadow-sm transition-all"
-                >
-                  <Play className="h-3.5 w-3.5 fill-current" />
+                  <Play className="h-3 w-3" />
                   <span>Resume Task</span>
                 </button>
-              ) : (
-                <button
-                  type="submit"
-                  disabled={!inputText.trim()}
-                  className="flex items-center gap-1.5 px-3.5 py-1.5 bg-sky-500 hover:bg-sky-400 disabled:opacity-40 disabled:hover:bg-sky-500 text-white rounded-lg text-xs font-semibold shadow-md shadow-sky-500/20 transition-all"
-                >
-                  <Play className="h-3.5 w-3.5 fill-current" />
-                  <span>Start Task</span>
-                </button>
               )}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="submit"
+                disabled={!inputText.trim()}
+                className={`px-4 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm ${
+                  isRunning && !isPaused
+                    ? 'bg-sky-600 hover:bg-sky-500 disabled:opacity-40 text-white'
+                    : isPaused
+                    ? 'bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white'
+                    : 'bg-sky-500 hover:bg-sky-400 disabled:opacity-40 text-black shadow-sky-500/20'
+                }`}
+              >
+                {isRunning && !isPaused ? (
+                  <>
+                    <Navigation className="h-3 w-3" />
+                    <span>Steer</span>
+                  </>
+                ) : isPaused ? (
+                  <>
+                    <Play className="h-3 w-3" />
+                    <span>Resume with Note</span>
+                  </>
+                ) : (
+                  <>
+                    <Send className="h-3 w-3" />
+                    <span>Start Task</span>
+                  </>
+                )}
+              </button>
             </div>
           </div>
         </form>

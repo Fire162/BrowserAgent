@@ -50,7 +50,11 @@ export const StepTimeline: React.FC<StepTimelineProps> = ({ steps }) => {
                     Step {step.stepNumber}:
                   </span>
 
-                  {step.toolCall ? (
+                  {step.toolCalls && step.toolCalls.length > 1 ? (
+                    <span className="font-mono text-sky-300 font-medium truncate">
+                      {step.toolCalls.map((t) => t.name).join(' + ')} ({step.toolCalls.length})
+                    </span>
+                  ) : step.toolCall ? (
                     <span className="font-mono text-sky-300 font-medium truncate">
                       {step.toolCall.name}
                       {step.toolCall.arguments.elementId && `(#${step.toolCall.arguments.elementId})`}
@@ -106,11 +110,13 @@ export const StepTimeline: React.FC<StepTimelineProps> = ({ steps }) => {
                     </div>
                   )}
 
-                  {step.toolCall && (
+                  {(step.toolCalls || step.toolCall) && (
                     <div>
-                      <span className="font-semibold text-slate-400 block mb-0.5">Tool Action:</span>
+                      <span className="font-semibold text-slate-400 block mb-0.5">
+                        {step.toolCalls && step.toolCalls.length > 1 ? `Tool Actions (${step.toolCalls.length}):` : 'Tool Action:'}
+                      </span>
                       <pre className="bg-slate-950 border border-slate-800/80 p-2 rounded text-[10px] text-sky-300 overflow-x-auto font-mono">
-                        {JSON.stringify(step.toolCall, null, 2)}
+                        {JSON.stringify(step.toolCalls || step.toolCall, null, 2)}
                       </pre>
                     </div>
                   )}

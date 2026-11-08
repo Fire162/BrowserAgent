@@ -12,6 +12,7 @@ export interface OpenAICompatibleOptions {
   customHeaders?: Record<string, string>;
   providerName: string;
   onStatusNotice?: (msg: string) => void;
+  signal?: AbortSignal;
 }
 
 export async function callOpenAICompatible({
@@ -24,6 +25,7 @@ export async function callOpenAICompatible({
   customHeaders = {},
   providerName,
   onStatusNotice,
+  signal,
 }: OpenAICompatibleOptions): Promise<LLMCompletionResponse> {
   const cleanBaseUrl = baseUrl.replace(/\/+$/, '');
   const url = cleanBaseUrl.endsWith('/chat/completions')
@@ -106,6 +108,7 @@ export async function callOpenAICompatible({
       temperature,
     }),
     onRetryNotice: onStatusNotice,
+    signal,
   });
 
   if (!res.ok) {

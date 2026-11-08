@@ -9,7 +9,8 @@ export async function executeLLMCall(
   settings: AllSettings,
   messages: ChatMessage[],
   tools: ToolDefinition[],
-  onStatusNotice?: (msg: string) => void
+  onStatusNotice?: (msg: string) => void,
+  signal?: AbortSignal
 ): Promise<LLMCompletionResponse> {
   const providerId = settings.activeProvider;
   const providerConfig = settings.providers[providerId];
@@ -26,13 +27,13 @@ export async function executeLLMCall(
   const dispatch = async (currentMessages: ChatMessage[]): Promise<LLMCompletionResponse> => {
     switch (providerId) {
       case 'openrouter':
-        return callOpenRouter(apiKey, model, currentMessages, tools, temperature, onStatusNotice);
+        return callOpenRouter(apiKey, model, currentMessages, tools, temperature, onStatusNotice, signal);
 
       case 'google':
-        return callGemini(apiKey, model, currentMessages, tools, temperature, onStatusNotice);
+        return callGemini(apiKey, model, currentMessages, tools, temperature, onStatusNotice, signal);
 
       case 'anthropic':
-        return callAnthropic(apiKey, model, currentMessages, tools, temperature, onStatusNotice);
+        return callAnthropic(apiKey, model, currentMessages, tools, temperature, onStatusNotice, signal);
 
       case 'openai':
         return callOpenAICompatible({
@@ -44,6 +45,7 @@ export async function executeLLMCall(
           temperature,
           providerName: 'OpenAI',
           onStatusNotice,
+          signal,
         });
 
       case 'deepseek':
@@ -56,6 +58,7 @@ export async function executeLLMCall(
           temperature,
           providerName: 'DeepSeek',
           onStatusNotice,
+          signal,
         });
 
       case 'alibaba':
@@ -68,6 +71,7 @@ export async function executeLLMCall(
           temperature,
           providerName: 'Alibaba Qwen',
           onStatusNotice,
+          signal,
         });
 
       case 'xai':
@@ -80,6 +84,7 @@ export async function executeLLMCall(
           temperature,
           providerName: 'xAI',
           onStatusNotice,
+          signal,
         });
 
       case 'zai':
@@ -92,6 +97,7 @@ export async function executeLLMCall(
           temperature,
           providerName: 'Z.ai',
           onStatusNotice,
+          signal,
         });
 
       case 'mistral':
@@ -104,6 +110,7 @@ export async function executeLLMCall(
           temperature,
           providerName: 'Mistral',
           onStatusNotice,
+          signal,
         });
 
       case 'custom':
@@ -116,6 +123,7 @@ export async function executeLLMCall(
           temperature,
           providerName: 'Custom/Local',
           onStatusNotice,
+          signal,
         });
 
       default:

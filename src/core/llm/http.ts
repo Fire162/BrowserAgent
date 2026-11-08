@@ -76,8 +76,13 @@ export async function fetchWithRetry(
 
       return res;
     } catch (err: any) {
+      // If manually aborted by user (e.g. Stop or Pause clicked), exit immediately
+      if (err.name === 'AbortError' || fetchInit.signal?.aborted) {
+        throw err;
+      }
+
       // If network failure or rate limit error after retries
-      if (attempt >= maxRetries || err.message.includes('exceeded after')) {
+      if (attempt >= maxRetries || err.message?.includes('exceeded after')) {
         throw err;
       }
 

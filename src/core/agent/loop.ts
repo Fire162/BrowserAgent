@@ -3,10 +3,18 @@ import { executeLLMCall } from '../llm/client';
 import { AGENT_TOOLS } from './tools';
 import { SYSTEM_PROMPT } from './prompts';
 
+export interface TargetTabInfo {
+  id: number;
+  title: string;
+  url: string;
+  favIconUrl?: string;
+}
+
 export interface StepRecord {
   stepNumber: number;
   thought?: string;
   toolCall?: ToolCall;
+  toolCalls?: ToolCall[];
   resultMessage?: string;
   timestamp: number;
   status: 'running' | 'success' | 'failed';
@@ -22,6 +30,7 @@ export interface AgentRunCallbacks {
   onError?: (error: Error) => void;
   onAskUser?: (question: string) => Promise<string>;
   onCostUpdate?: (costUSD: number, totalTokens: number) => void;
+  onTargetTabChanged?: (tabInfo: TargetTabInfo) => void;
 }
 
 export class AgentExecution {
@@ -35,14 +44,20 @@ export class AgentExecution {
   private accumulatedTokens = 0;
   private recordedSteps: StepRecord[] = [];
   private pendingScreenshotUrl?: string;
+  private targetTabId?: number;
+  private targetTabInfo?: TargetTabInfo;
+  private abortController = new AbortController();
 
   constructor(
     private settings: AllSettings,
     private goal: string,
     private callbacks: AgentRunCallbacks = {},
     initialMessages?: ChatMessage[],
-    initialSteps?: StepRecord[]
+    initialSteps?: StepRecord[],
+    assignedTabId?: number
   ) {
+    this.targetTabId = assignedTabId;
+
     if (initialMessages && initialMessages.length > 0) {
       this.messages = [...initialMessages];
     } else {
@@ -67,11 +82,13 @@ export class AgentExecution {
   public abort(): void {
     this.aborted = true;
     this.paused = false;
+    this.abortController.abort();
     this.callbacks.onLog?.('Task stopped by user.');
   }
 
   public pause(): void {
     this.paused = true;
+    this.abortController.abort();
     this.callbacks.onLog?.('Task paused. Awaiting follow-up instruction...');
   }
 
@@ -102,7 +119,15 @@ export class AgentExecution {
     return this.accumulatedCostUSD;
   }
 
-  private async getActiveTabId(): Promise<number> {
+  public getTargetTabId(): number | undefined {
+    return this.targetTabId;
+  }
+
+  public getTargetTabInfo(): TargetTabInfo | undefined {
+    return this.targetTabInfo;
+  }
+
+  private async getActiveTab(): Promise<chrome.tabs.Tab> {
     if (typeof chrome === 'undefined' || !chrome.tabs) {
       throw new Error('Chrome extension tabs API is not available.');
     }
@@ -111,7 +136,7 @@ export class AgentExecution {
     if (!tabs || tabs.length === 0 || !tabs[0].id) {
       throw new Error('No active browser tab found.');
     }
-    return tabs[0].id;
+    return tabs[0];
   }
 
   private async ensureContentScript(tabId: number): Promise<void> {
@@ -163,11 +188,12 @@ export class AgentExecution {
     });
   }
 
-  private async clearBadges(tabId: number): Promise<void> {
+  private async clearBadges(tabId?: number): Promise<void> {
+    if (!tabId) return;
     try {
       await chrome.tabs.sendMessage(tabId, { action: 'clear_labels' });
     } catch {
-      // Ignore cleanup error
+      // Ignore cleanup error if tab closed
     }
   }
 
@@ -178,8 +204,35 @@ export class AgentExecution {
   public async run(followUpInstruction?: string): Promise<string> {
     this.aborted = false;
     this.paused = false;
+    this.abortController = new AbortController();
 
-    let tabId = await this.getActiveTabId();
+    // 1. Lock Target Tab ID so user can multi-task on other tabs without disruption
+    if (!this.targetTabId) {
+      const activeTab = await this.getActiveTab();
+      this.targetTabId = activeTab.id!;
+      this.targetTabInfo = {
+        id: activeTab.id!,
+        title: activeTab.title || 'Active Tab',
+        url: activeTab.url || '',
+        favIconUrl: activeTab.favIconUrl,
+      };
+    }
+
+    // Verify assigned tab is open
+    try {
+      const tab = await chrome.tabs.get(this.targetTabId);
+      this.targetTabInfo = {
+        id: tab.id!,
+        title: tab.title || 'Tab #' + tab.id,
+        url: tab.url || '',
+        favIconUrl: tab.favIconUrl,
+      };
+      this.callbacks.onTargetTabChanged?.(this.targetTabInfo);
+    } catch {
+      return `Target tab #${this.targetTabId} was closed or not found.`;
+    }
+
+    const tabId = this.targetTabId;
     await this.ensureContentScript(tabId);
 
     let maxBudgetUSD = this.settings.agent.maxBudgetUSD ?? 0.25;
@@ -203,6 +256,23 @@ export class AgentExecution {
         if (this.paused) {
           await this.clearBadges(tabId);
           return 'Execution paused. Enter follow-up instructions to resume.';
+        }
+
+        // Check if assigned tab is still alive
+        try {
+          const tab = await chrome.tabs.get(tabId);
+          this.targetTabInfo = {
+            id: tab.id!,
+            title: tab.title || 'Tab #' + tab.id,
+            url: tab.url || '',
+            favIconUrl: tab.favIconUrl,
+          };
+          this.callbacks.onTargetTabChanged?.(this.targetTabInfo);
+        } catch {
+          await this.clearBadges(tabId);
+          const closedMsg = `Target tab #${tabId} was closed. Execution concluded.`;
+          this.callbacks.onFinish?.(closedMsg);
+          return closedMsg;
         }
 
         // Budget check: If budget cap is set and exceeded, pause and ask user
@@ -234,26 +304,27 @@ export class AgentExecution {
         }
 
         this.callbacks.onStepStart?.(this.stepCounter);
-
-        // Make sure active tab is still accessible
-        tabId = await this.getActiveTabId();
         await this.ensureContentScript(tabId);
 
-        // 1. Observe DOM
+        // 1. Observe DOM on the assigned target tab
         let snapshot: any;
         try {
           snapshot = await this.getPageSnapshot(tabId, showVisualLabels);
         } catch (err: any) {
-          this.callbacks.onLog?.(`Retrying page observation: ${err.message}`);
+          this.callbacks.onLog?.(`Retrying page observation on tab #${tabId}: ${err.message}`);
           await this.sleep(1500);
           snapshot = await this.getPageSnapshot(tabId, showVisualLabels);
         }
 
-        const elementsList = snapshot.snapshotText
-          ? snapshot.snapshotText.slice(0, 8000)
-          : 'No visible interactive elements detected.';
+        let elementsList = snapshot.snapshotText || 'No visible interactive elements detected.';
+        // Clean line-based slicing if elements list exceeds 8000 characters
+        if (elementsList.length > 8000) {
+          const cutIdx = elementsList.lastIndexOf('\n', 8000);
+          elementsList = (cutIdx > 0 ? elementsList.slice(0, cutIdx) : elementsList.slice(0, 8000)) + '\n... [Remaining elements truncated; scroll to view more]';
+        }
 
         let observationContent = `[CURRENT PAGE OBSERVATION]
+Tab ID: ${tabId}
 URL: ${snapshot.url}
 Title: ${snapshot.title}
 Interactive Elements:
@@ -264,7 +335,7 @@ What is your next action?`;
         let currentObservationImageUrl: string | undefined = undefined;
         if (this.pendingScreenshotUrl) {
           currentObservationImageUrl = this.pendingScreenshotUrl;
-          observationContent += `\n\n[SCREENSHOT IMAGE ATTACHED]: A visual screenshot of the current viewport is attached to this message for your inspection.`;
+          observationContent += `\n\n[SCREENSHOT IMAGE ATTACHED]: A visual screenshot of the assigned tab's visible viewport is attached to this message for your visual analysis.`;
           this.pendingScreenshotUrl = undefined;
         }
 
@@ -281,15 +352,25 @@ What is your next action?`;
           imageUrl: currentObservationImageUrl,
         });
 
-        // 2. Reason (Call LLM with resilient 429 backoff)
+        // 2. Reason (Call LLM with resilient 429 backoff and AbortController signal)
         this.callbacks.onLog?.(`Thinking with ${this.settings.activeProvider}...`);
         
-        const response = await executeLLMCall(
-          this.settings,
-          this.messages,
-          AGENT_TOOLS,
-          (retryNotice) => this.callbacks.onLog?.(retryNotice)
-        );
+        let response;
+        try {
+          response = await executeLLMCall(
+            this.settings,
+            this.messages,
+            AGENT_TOOLS,
+            (retryNotice) => this.callbacks.onLog?.(retryNotice),
+            this.abortController.signal
+          );
+        } catch (callErr: any) {
+          if (this.aborted || this.paused || callErr.name === 'AbortError') {
+            await this.clearBadges(tabId);
+            return this.aborted ? 'Execution stopped by user.' : 'Execution paused.';
+          }
+          throw callErr;
+        }
 
         // Track spending and tokens
         if (response.estimatedCostUSD) {
@@ -324,113 +405,146 @@ What is your next action?`;
           continue;
         }
 
-        // Execute primary tool call
-        const primaryTool = toolCalls[0];
+        // 3. Act: Multi-Action Batch Execution (Execute all tools in sequence)
         const stepRecord: StepRecord = {
           stepNumber: this.stepCounter,
           thought,
-          toolCall: primaryTool,
+          toolCall: toolCalls[0],
+          toolCalls: toolCalls,
           timestamp: Date.now(),
           status: 'running',
           costUSD: response.estimatedCostUSD,
         };
 
-        // 3. Act
-        let toolResultStr = '';
+        const executedResults: { id: string; name: string; resultStr: string; imageUrl?: string }[] = [];
+        let shouldFinish = false;
+        let finishSummary = '';
 
-        if (primaryTool.name === 'finish') {
-          const summary = primaryTool.arguments.summary || thought || 'Task marked complete.';
-          stepRecord.status = 'success';
-          stepRecord.resultMessage = 'Task finished.';
-          this.recordedSteps.push(stepRecord);
-          this.callbacks.onStepComplete?.(stepRecord);
-          await this.clearBadges(tabId);
-          this.completed = true;
-          this.callbacks.onFinish?.(summary);
-          return summary;
-        }
-
-        if (primaryTool.name === 'take_screenshot') {
-          this.callbacks.onLog?.('Capturing visible tab screenshot...');
-          const shotRes = await new Promise<any>((resolve) => {
-            chrome.runtime.sendMessage({ action: 'capture_screenshot' }, (res) => {
-              resolve(res || {});
-            });
-          });
-
-          if (shotRes?.success && shotRes?.dataUrl) {
-            stepRecord.screenshotUrl = shotRes.dataUrl;
-            this.pendingScreenshotUrl = shotRes.dataUrl;
-            toolResultStr = 'Screenshot captured successfully. Visual screenshot image is provided directly to you in the observation.';
-            stepRecord.status = 'success';
-          } else {
-            toolResultStr = `Screenshot capture failed: ${shotRes?.error || 'Unknown error'}`;
-            stepRecord.status = 'failed';
-          }
-        } else if (primaryTool.name === 'ask_user') {
-          const question = primaryTool.arguments.question || 'Clarification needed from user.';
-          stepRecord.status = 'running';
-          stepRecord.resultMessage = `Waiting for user: "${question}"`;
-          this.callbacks.onStepComplete?.(stepRecord);
-          this.callbacks.onLog?.('Awaiting your input...');
-
-          let userReply = 'Confirmed. Please proceed.';
-          if (this.callbacks.onAskUser) {
-            userReply = await this.callbacks.onAskUser(question);
-          }
+        for (let i = 0; i < toolCalls.length; i++) {
+          const currentTool = toolCalls[i];
+          const toolCallId = currentTool.id || `call_${this.stepCounter}_${i}`;
 
           if (this.aborted || this.paused) {
             await this.clearBadges(tabId);
-            return 'Execution paused by user.';
+            return this.aborted ? 'Execution stopped by user.' : 'Execution paused.';
           }
 
-          stepRecord.status = 'success';
-          stepRecord.resultMessage = `User replied: "${userReply}"`;
-          this.callbacks.onStepComplete?.(stepRecord);
-          this.callbacks.onLog?.('Resuming task with your response...');
-
-          toolResultStr = `User responded: "${userReply}". Please proceed with the next step.`;
-        } else if (primaryTool.name === 'wait') {
-          const secs = Math.min(10, Math.max(1, parseInt(primaryTool.arguments.seconds || '2', 10)));
-          this.callbacks.onLog?.(`Waiting ${secs}s for page update...`);
-          await this.sleep(secs * 1000);
-          toolResultStr = `Waited for ${secs} seconds.`;
-        } else if (primaryTool.name === 'navigate') {
-          const url = primaryTool.arguments.url;
-          this.callbacks.onLog?.(`Navigating to ${url}...`);
-          await new Promise<void>((resolve) => {
-            chrome.runtime.sendMessage({ action: 'navigate_tab', params: { tabId, url } }, () => {
-              setTimeout(resolve, 2000);
+          if (currentTool.name === 'finish') {
+            finishSummary = currentTool.arguments.summary || thought || 'Task marked complete.';
+            shouldFinish = true;
+            executedResults.push({
+              id: toolCallId,
+              name: 'finish',
+              resultStr: 'Task completed.',
             });
-          });
-          toolResultStr = `Navigated to ${url}.`;
-        } else {
-          const domRes = await this.executeDOMAction(tabId, primaryTool.name, primaryTool.arguments);
-          toolResultStr = domRes.message || JSON.stringify(domRes);
-          if (!domRes.success) {
-            stepRecord.status = 'failed';
+            break;
+          }
+
+          if (currentTool.name === 'take_screenshot') {
+            this.callbacks.onLog?.('Capturing tab screenshot...');
+            const shotRes = await new Promise<any>((resolve) => {
+              chrome.runtime.sendMessage({ action: 'capture_screenshot', params: { tabId } }, (res) => {
+                resolve(res || {});
+              });
+            });
+
+            if (shotRes?.success && shotRes?.dataUrl) {
+              stepRecord.screenshotUrl = shotRes.dataUrl;
+              this.pendingScreenshotUrl = shotRes.dataUrl;
+              executedResults.push({
+                id: toolCallId,
+                name: 'take_screenshot',
+                resultStr: 'Screenshot captured successfully. Visual screenshot image is provided directly to you in the observation.',
+                imageUrl: shotRes.dataUrl,
+              });
+            } else {
+              executedResults.push({
+                id: toolCallId,
+                name: 'take_screenshot',
+                resultStr: `Screenshot capture failed: ${shotRes?.error || 'Unknown error'}`,
+              });
+            }
+          } else if (currentTool.name === 'ask_user') {
+            const question = currentTool.arguments.question || 'Clarification needed from user.';
+            stepRecord.resultMessage = `Waiting for user: "${question}"`;
+            this.callbacks.onStepComplete?.(stepRecord);
+            this.callbacks.onLog?.('Awaiting your input...');
+
+            let userReply = 'Confirmed. Please proceed.';
+            if (this.callbacks.onAskUser) {
+              userReply = await this.callbacks.onAskUser(question);
+            }
+
+            if (this.aborted || this.paused) {
+              await this.clearBadges(tabId);
+              return this.aborted ? 'Execution stopped by user.' : 'Execution paused.';
+            }
+
+            executedResults.push({
+              id: toolCallId,
+              name: 'ask_user',
+              resultStr: `User responded: "${userReply}". Please proceed with the next step.`,
+            });
+          } else if (currentTool.name === 'wait') {
+            const secs = Math.min(10, Math.max(1, parseInt(currentTool.arguments.seconds || '2', 10)));
+            this.callbacks.onLog?.(`Waiting ${secs}s...`);
+            await this.sleep(secs * 1000);
+            executedResults.push({
+              id: toolCallId,
+              name: 'wait',
+              resultStr: `Waited for ${secs} seconds.`,
+            });
+          } else if (currentTool.name === 'navigate') {
+            const url = currentTool.arguments.url;
+            this.callbacks.onLog?.(`Navigating tab #${tabId} to ${url}...`);
+            await new Promise<void>((resolve) => {
+              chrome.runtime.sendMessage({ action: 'navigate_tab', params: { tabId, url } }, () => {
+                setTimeout(resolve, 2000);
+              });
+            });
+            executedResults.push({
+              id: toolCallId,
+              name: 'navigate',
+              resultStr: `Navigated to ${url}.`,
+            });
           } else {
-            stepRecord.status = 'success';
+            const domRes = await this.executeDOMAction(tabId, currentTool.name, currentTool.arguments);
+            executedResults.push({
+              id: toolCallId,
+              name: currentTool.name,
+              resultStr: domRes.message || JSON.stringify(domRes),
+            });
           }
         }
 
-        stepRecord.resultMessage = toolResultStr;
+        const combinedResultStr = executedResults.map((r) => `[${r.name}] ${r.resultStr}`).join('\n');
+        stepRecord.status = executedResults.some((r) => r.resultStr.includes('failed') || r.resultStr.includes('Could not find')) ? 'failed' : 'success';
+        stepRecord.resultMessage = combinedResultStr;
         this.recordedSteps.push(stepRecord);
         this.callbacks.onStepComplete?.(stepRecord);
 
-        // Append assistant tool call and tool result to conversation
+        // Append assistant tool calls and matching tool result messages
         this.messages.push({
           role: 'assistant',
           content: thought,
-          toolCalls: [primaryTool],
+          toolCalls: toolCalls.slice(0, executedResults.length),
         });
 
-        this.messages.push({
-          role: 'tool',
-          toolCallId: primaryTool.id || `call_${this.stepCounter}`,
-          content: toolResultStr,
-          imageUrl: primaryTool.name === 'take_screenshot' && stepRecord.screenshotUrl ? stepRecord.screenshotUrl : undefined,
-        });
+        for (const r of executedResults) {
+          this.messages.push({
+            role: 'tool',
+            toolCallId: r.id,
+            content: r.resultStr,
+            imageUrl: r.imageUrl,
+          });
+        }
+
+        if (shouldFinish) {
+          await this.clearBadges(tabId);
+          this.completed = true;
+          this.callbacks.onFinish?.(finishSummary);
+          return finishSummary;
+        }
 
         await this.sleep(800);
         this.stepCounter++;

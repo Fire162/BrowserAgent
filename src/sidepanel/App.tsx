@@ -1,10 +1,10 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Header, ActiveTab } from './components/Header';
 import { SettingsView } from './components/SettingsView';
 import { ChatView } from './components/ChatView';
 import { HistoryView } from './components/HistoryView';
 import { useSettings } from './hooks/useSettings';
-import { AgentExecution, StepRecord } from '../core/agent/loop';
+import { AgentExecution, StepRecord, TargetTabInfo } from '../core/agent/loop';
 import { saveTask, TaskRecord } from '../core/storage/db';
 import { PROVIDERS } from '../core/llm/providers/registry';
 
@@ -27,9 +27,45 @@ export const App: React.FC = () => {
   const [steps, setSteps] = useState<StepRecord[]>([]);
   const [finalResult, setFinalResult] = useState<string | null>(null);
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
+  const [targetTab, setTargetTab] = useState<TargetTabInfo | null>(null);
 
   const activeExecutionRef = useRef<AgentExecution | null>(null);
   const userPromptResolverRef = useRef<((answer: string) => void) | null>(null);
+
+  // Initialize and detect active tab on mount
+  useEffect(() => {
+    if (typeof chrome !== 'undefined' && chrome.tabs) {
+      chrome.tabs.query({ active: true, currentWindow: true }).then((tabs) => {
+        if (tabs && tabs.length > 0 && tabs[0].id) {
+          setTargetTab({
+            id: tabs[0].id,
+            title: tabs[0].title || 'Active Tab',
+            url: tabs[0].url || '',
+            favIconUrl: tabs[0].favIconUrl,
+          });
+        }
+      });
+    }
+  }, []);
+
+  const handleFocusTab = () => {
+    if (targetTab?.id && typeof chrome !== 'undefined' && chrome.tabs) {
+      chrome.tabs.update(targetTab.id, { active: true });
+    }
+  };
+
+  const handleCreateNewTab = async () => {
+    if (typeof chrome !== 'undefined' && chrome.tabs) {
+      const newTab = await chrome.tabs.create({ url: 'https://www.google.com', active: true });
+      if (newTab.id) {
+        setTargetTab({
+          id: newTab.id,
+          title: newTab.title || 'New Agent Tab',
+          url: newTab.url || 'https://www.google.com',
+        });
+      }
+    }
+  };
 
   if (loading) {
     return (
@@ -61,38 +97,48 @@ export const App: React.FC = () => {
     setLiveCostUSD(0);
     setLiveTokens(0);
     setPendingQuestion(null);
-    setLiveStatus('Initializing agent...');
+    setLiveStatus('Initializing agent on assigned tab...');
 
     const startTime = Date.now();
 
-    const execution = new AgentExecution(settings, goal, {
-      onStepStart: (num) => {
-        setCurrentStep(num);
+    const execution = new AgentExecution(
+      settings,
+      goal,
+      {
+        onStepStart: (num) => {
+          setCurrentStep(num);
+        },
+        onStepComplete: (step) => {
+          setSteps((prev) => [...prev, step]);
+        },
+        onCostUpdate: (cost, tokens) => {
+          setLiveCostUSD(cost);
+          setLiveTokens(tokens);
+        },
+        onLog: (msg) => {
+          setLiveStatus(msg);
+        },
+        onFinish: (summary) => {
+          setFinalResult(summary);
+          setLiveStatus('Task completed.');
+        },
+        onError: (err) => {
+          setLiveStatus(`Error: ${err.message}`);
+        },
+        onAskUser: (question: string) => {
+          setPendingQuestion(question);
+          return new Promise<string>((resolve) => {
+            userPromptResolverRef.current = resolve;
+          });
+        },
+        onTargetTabChanged: (info) => {
+          setTargetTab(info);
+        },
       },
-      onStepComplete: (step) => {
-        setSteps((prev) => [...prev, step]);
-      },
-      onCostUpdate: (cost, tokens) => {
-        setLiveCostUSD(cost);
-        setLiveTokens(tokens);
-      },
-      onLog: (msg) => {
-        setLiveStatus(msg);
-      },
-      onFinish: (summary) => {
-        setFinalResult(summary);
-        setLiveStatus('Task completed.');
-      },
-      onError: (err) => {
-        setLiveStatus(`Error: ${err.message}`);
-      },
-      onAskUser: (question: string) => {
-        setPendingQuestion(question);
-        return new Promise<string>((resolve) => {
-          userPromptResolverRef.current = resolve;
-        });
-      },
-    });
+      undefined,
+      undefined,
+      targetTab?.id
+    );
 
     activeExecutionRef.current = execution;
 
@@ -156,7 +202,7 @@ export const App: React.FC = () => {
 
     setIsRunning(true);
     setIsPaused(false);
-    setLiveStatus('Resuming task with your follow-up instruction...');
+    setLiveStatus('Resuming task on assigned tab with follow-up...');
 
     try {
       const summary = await activeExecutionRef.current.run(followUpText);
@@ -231,9 +277,13 @@ export const App: React.FC = () => {
             userPromptResolverRef.current = resolve;
           });
         },
+        onTargetTabChanged: (info) => {
+          setTargetTab(info);
+        },
       },
       task.messages,
-      task.steps
+      task.steps,
+      targetTab?.id
     );
     activeExecutionRef.current = execution;
 
@@ -274,6 +324,9 @@ export const App: React.FC = () => {
             activeModel={currentModel}
             pendingQuestion={pendingQuestion}
             onAnswerQuestion={handleAnswerQuestion}
+            targetTab={targetTab}
+            onFocusTab={handleFocusTab}
+            onCreateNewTab={handleCreateNewTab}
           />
         )}
 

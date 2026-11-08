@@ -16,7 +16,8 @@ export async function callAnthropic(
   messages: ChatMessage[],
   tools: ToolDefinition[],
   temperature = 0.2,
-  onStatusNotice?: (msg: string) => void
+  onStatusNotice?: (msg: string) => void,
+  signal?: AbortSignal
 ): Promise<LLMCompletionResponse> {
   if (!apiKey) {
     throw new Error('Anthropic API key is required. Please set it in Settings.');
@@ -131,6 +132,7 @@ export async function callAnthropic(
       tools: formattedTools.length > 0 ? formattedTools : undefined,
     }),
     onRetryNotice: onStatusNotice,
+    signal,
   });
 
   if (!res.ok) {

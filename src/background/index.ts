@@ -41,6 +41,41 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (action === 'capture_screenshot') {
+    const { tabId } = params || {};
+    if (tabId) {
+      chrome.tabs.get(tabId, (tab) => {
+        if (chrome.runtime.lastError || !tab) {
+          sendResponse({ success: false, error: 'Target tab not found' });
+          return;
+        }
+
+        const windowId = tab.windowId;
+        if (!tab.active) {
+          // If tab is in background, activate momentarily to capture
+          chrome.tabs.update(tabId, { active: true }, () => {
+            setTimeout(() => {
+              chrome.tabs.captureVisibleTab(windowId, { format: 'jpeg', quality: 80 }, (dataUrl) => {
+                if (chrome.runtime.lastError) {
+                  sendResponse({ success: false, error: chrome.runtime.lastError.message });
+                } else {
+                  sendResponse({ success: true, dataUrl });
+                }
+              });
+            }, 150);
+          });
+        } else {
+          chrome.tabs.captureVisibleTab(windowId, { format: 'jpeg', quality: 80 }, (dataUrl) => {
+            if (chrome.runtime.lastError) {
+              sendResponse({ success: false, error: chrome.runtime.lastError.message });
+            } else {
+              sendResponse({ success: true, dataUrl });
+            }
+          });
+        }
+      });
+      return true;
+    }
+
     chrome.tabs.captureVisibleTab({ format: 'jpeg', quality: 80 }, (dataUrl) => {
       if (chrome.runtime.lastError) {
         sendResponse({ success: false, error: chrome.runtime.lastError.message });

@@ -44,7 +44,8 @@ export async function callOpenRouter(
   messages: ChatMessage[],
   tools: ToolDefinition[],
   temperature = 0.2,
-  onStatusNotice?: (msg: string) => void
+  onStatusNotice?: (msg: string) => void,
+  signal?: AbortSignal
 ): Promise<LLMCompletionResponse> {
   if (!apiKey) {
     throw new Error('OpenRouter API key is required. Please set it in Settings.');
@@ -122,6 +123,7 @@ export async function callOpenRouter(
       temperature,
     }),
     onRetryNotice: onStatusNotice,
+    signal,
   });
 
   if (!res.ok) {
