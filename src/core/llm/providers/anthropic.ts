@@ -2,6 +2,14 @@ import { ChatMessage, LLMCompletionResponse, ToolDefinition } from '../types';
 import { fetchWithRetry } from '../http';
 import { estimateCostUSD } from '../pricing';
 
+function parseDataUrl(dataUrl: string): { mimeType: string; data: string } {
+  const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+  if (match) {
+    return { mimeType: match[1], data: match[2] };
+  }
+  return { mimeType: 'image/jpeg', data: dataUrl };
+}
+
 export async function callAnthropic(
   apiKey: string,
   model: string,
@@ -21,10 +29,31 @@ export async function callAnthropic(
 
   for (const m of chatMessages) {
     if (m.role === 'user') {
-      formattedMessages.push({
-        role: 'user',
-        content: m.content,
-      });
+      if (m.imageUrl) {
+        const { mimeType, data } = parseDataUrl(m.imageUrl);
+        formattedMessages.push({
+          role: 'user',
+          content: [
+            {
+              type: 'image',
+              source: {
+                type: 'base64',
+                media_type: mimeType,
+                data: data,
+              },
+            },
+            {
+              type: 'text',
+              text: m.content,
+            },
+          ],
+        });
+      } else {
+        formattedMessages.push({
+          role: 'user',
+          content: m.content,
+        });
+      }
     } else if (m.role === 'assistant') {
       const contentBlocks: any[] = [];
       if (m.content) {
@@ -45,13 +74,30 @@ export async function callAnthropic(
         content: contentBlocks.length > 0 ? contentBlocks : [{ type: 'text', text: '' }],
       });
     } else if (m.role === 'tool') {
+      const toolContentBlocks: any[] = [];
+      if (m.imageUrl) {
+        const { mimeType, data } = parseDataUrl(m.imageUrl);
+        toolContentBlocks.push({
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: mimeType,
+            data: data,
+          },
+        });
+      }
+      toolContentBlocks.push({
+        type: 'text',
+        text: m.content,
+      });
+
       formattedMessages.push({
         role: 'user',
         content: [
           {
             type: 'tool_result',
             tool_use_id: m.toolCallId || '',
-            content: m.content,
+            content: toolContentBlocks,
           },
         ],
       });

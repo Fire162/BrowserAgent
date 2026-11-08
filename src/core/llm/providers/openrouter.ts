@@ -72,6 +72,26 @@ export async function callOpenRouter(
         })),
       };
     }
+    if (m.role === 'user') {
+      if (m.imageUrl) {
+        return {
+          role: 'user',
+          content: [
+            { type: 'text', text: m.content },
+            {
+              type: 'image_url',
+              image_url: {
+                url: m.imageUrl,
+              },
+            },
+          ],
+        };
+      }
+      return {
+        role: 'user',
+        content: m.content,
+      };
+    }
     return {
       role: m.role,
       content: m.content,

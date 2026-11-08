@@ -115,7 +115,7 @@ export const AGENT_TOOLS: ToolDefinition[] = [
   },
   {
     name: 'take_screenshot',
-    description: 'Capture a visual screenshot of the current visible tab viewport to inspect visual layout, images, charts, or verify visual appearance.',
+    description: 'Capture a visual screenshot of the current visible tab viewport. The captured image will be immediately provided to you in the next observation so you can visually inspect layout, charts, graphics, and elements.',
     parameters: {
       type: 'object',
       properties: {

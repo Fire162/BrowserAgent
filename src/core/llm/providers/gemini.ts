@@ -2,6 +2,14 @@ import { ChatMessage, LLMCompletionResponse, ToolDefinition } from '../types';
 import { fetchWithRetry } from '../http';
 import { estimateCostUSD } from '../pricing';
 
+function parseDataUrl(dataUrl: string): { mimeType: string; data: string } {
+  const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+  if (match) {
+    return { mimeType: match[1], data: match[2] };
+  }
+  return { mimeType: 'image/jpeg', data: dataUrl };
+}
+
 export async function callGemini(
   apiKey: string,
   model: string,
@@ -53,9 +61,20 @@ export async function callGemini(
       };
     }
 
+    const userParts: any[] = [{ text: m.content }];
+    if (m.imageUrl) {
+      const { mimeType, data } = parseDataUrl(m.imageUrl);
+      userParts.push({
+        inlineData: {
+          mimeType,
+          data,
+        },
+      });
+    }
+
     return {
       role: 'user',
-      parts: [{ text: m.content }],
+      parts: userParts,
     };
   });
 

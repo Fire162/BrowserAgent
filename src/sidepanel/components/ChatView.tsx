@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Send, Pause, Play, Sparkles, Copy, Check, Terminal, Compass, HelpCircle, ArrowRight, Navigation } from 'lucide-react';
 import { StepRecord } from '../../core/agent/loop';
 import { StepTimeline } from './StepTimeline';
+import { MarkdownViewer } from './MarkdownViewer';
 
 interface ChatViewProps {
   isRunning: boolean;
@@ -259,8 +260,8 @@ export const ChatView: React.FC<ChatViewProps> = ({
                 <span>{copied ? 'Copied' : 'Copy'}</span>
               </button>
             </div>
-            <div className="text-xs text-slate-200 whitespace-pre-wrap leading-relaxed font-sans select-text">
-              {finalResult}
+            <div className="bg-slate-950/60 p-3 rounded-lg border border-slate-800/80">
+              <MarkdownViewer content={finalResult} />
             </div>
           </div>
         )}

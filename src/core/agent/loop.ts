@@ -34,6 +34,7 @@ export class AgentExecution {
   private accumulatedCostUSD = 0;
   private accumulatedTokens = 0;
   private recordedSteps: StepRecord[] = [];
+  private pendingScreenshotUrl?: string;
 
   constructor(
     private settings: AllSettings,
@@ -260,6 +261,13 @@ ${elementsList}
 
 What is your next action?`;
 
+        let currentObservationImageUrl: string | undefined = undefined;
+        if (this.pendingScreenshotUrl) {
+          currentObservationImageUrl = this.pendingScreenshotUrl;
+          observationContent += `\n\n[SCREENSHOT IMAGE ATTACHED]: A visual screenshot of the current viewport is attached to this message for your inspection.`;
+          this.pendingScreenshotUrl = undefined;
+        }
+
         // Check if user submitted mid-flight steering message
         if (this.steeringQueue.length > 0) {
           const guidance = this.steeringQueue.splice(0, this.steeringQueue.length).join('\n');
@@ -270,6 +278,7 @@ What is your next action?`;
         this.messages.push({
           role: 'user',
           content: observationContent,
+          imageUrl: currentObservationImageUrl,
         });
 
         // 2. Reason (Call LLM with resilient 429 backoff)
@@ -351,7 +360,8 @@ What is your next action?`;
 
           if (shotRes?.success && shotRes?.dataUrl) {
             stepRecord.screenshotUrl = shotRes.dataUrl;
-            toolResultStr = 'Screenshot captured successfully and attached to report.';
+            this.pendingScreenshotUrl = shotRes.dataUrl;
+            toolResultStr = 'Screenshot captured successfully. Visual screenshot image is provided directly to you in the observation.';
             stepRecord.status = 'success';
           } else {
             toolResultStr = `Screenshot capture failed: ${shotRes?.error || 'Unknown error'}`;
@@ -419,6 +429,7 @@ What is your next action?`;
           role: 'tool',
           toolCallId: primaryTool.id || `call_${this.stepCounter}`,
           content: toolResultStr,
+          imageUrl: primaryTool.name === 'take_screenshot' && stepRecord.screenshotUrl ? stepRecord.screenshotUrl : undefined,
         });
 
         await this.sleep(800);

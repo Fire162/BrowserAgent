@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ChevronDown, ChevronRight, CheckCircle2, AlertCircle, Loader2, Image as ImageIcon, X } from 'lucide-react';
 import { StepRecord } from '../../core/agent/loop';
+import { MarkdownViewer } from './MarkdownViewer';
 
 interface StepTimelineProps {
   steps: StepRecord[];
@@ -84,7 +85,9 @@ export const StepTimeline: React.FC<StepTimelineProps> = ({ steps }) => {
                   {step.thought && (
                     <div>
                       <span className="font-semibold text-slate-400 block mb-0.5">Reasoning:</span>
-                      <p className="text-slate-300 leading-relaxed font-sans">{step.thought}</p>
+                      <div className="bg-slate-900/60 p-2 rounded border border-slate-800">
+                        <MarkdownViewer content={step.thought} className="text-[11px]" />
+                      </div>
                     </div>
                   )}
 

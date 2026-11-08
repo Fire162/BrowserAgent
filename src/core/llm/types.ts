@@ -57,6 +57,7 @@ export interface ToolCall {
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
+  imageUrl?: string; // Optional base64 data URL (e.g., data:image/jpeg;base64,...)
   toolCalls?: ToolCall[];
   toolCallId?: string;
   timestamp?: number;

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { History, Trash2, CheckCircle, XCircle, Clock, ArrowRight, MessageSquare, Play } from 'lucide-react';
 import { loadTasks, clearTasks, TaskRecord } from '../../core/storage/db';
+import { MarkdownViewer } from './MarkdownViewer';
 
 interface HistoryViewProps {
   onRerunTask: (goal: string) => void;
@@ -104,8 +105,8 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onRerunTask, onResumeT
             {selectedTask.resultSummary && (
               <div>
                 <span className="text-[11px] font-semibold text-slate-400 block mb-1">Result:</span>
-                <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800 text-slate-300 font-sans whitespace-pre-wrap leading-relaxed text-[11px]">
-                  {selectedTask.resultSummary}
+                <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800">
+                  <MarkdownViewer content={selectedTask.resultSummary} className="text-[11px]" />
                 </div>
               </div>
             )}
