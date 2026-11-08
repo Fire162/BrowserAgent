@@ -157,13 +157,62 @@ export class AgentExecution {
   }
 
   private async getPageSnapshot(tabId: number, showVisualLabels: boolean): Promise<any> {
+    // 1. Detect if the tab is on an unscriptable error page (e.g. DNS failure, ERR_NAME_NOT_RESOLVED)
+    try {
+      const tab = await chrome.tabs.get(tabId);
+      const tabUrl = tab?.url || '';
+      const tabTitle = (tab?.title || '').toLowerCase();
+      if (
+        tabUrl.startsWith('chrome-error://') ||
+        tabTitle.includes("site can't be reached") ||
+        tabTitle.includes("site can’t be reached") ||
+        tabTitle.includes('err_name_not_resolved') ||
+        tabTitle.includes('err_connection_refused') ||
+        tabTitle.includes('dns_probe_finished')
+      ) {
+        return {
+          url: tabUrl,
+          title: tab?.title || "Site can't be reached",
+          elements: [],
+          snapshotText: `[PAGE LOAD ERROR]: This site cannot be reached (${tab?.title || 'ERR_NAME_NOT_RESOLVED'}). The requested domain does not exist or failed to load. Do NOT assume content exists here; please pivot to another site or search engine.`,
+          bodySnippet: "Site can't be reached",
+        };
+      }
+    } catch {
+      // Ignore tab get error
+    }
+
     return new Promise((resolve, reject) => {
       chrome.tabs.sendMessage(
         tabId,
         { action: 'get_snapshot', params: { showVisualLabels } },
         (res) => {
           if (chrome.runtime.lastError) {
-            reject(new Error(chrome.runtime.lastError.message));
+            // Check if tab is on an error page before rejecting
+            chrome.tabs
+              .get(tabId)
+              .then((tab) => {
+                const tabUrl = tab?.url || '';
+                const tabTitle = (tab?.title || '').toLowerCase();
+                if (
+                  tabUrl.startsWith('chrome-error://') ||
+                  tabTitle.includes("can't be reached") ||
+                  tabTitle.includes("can’t be reached")
+                ) {
+                  resolve({
+                    url: tabUrl,
+                    title: tab?.title || "Site can't be reached",
+                    elements: [],
+                    snapshotText: `[PAGE LOAD ERROR]: ${tab?.title || "This site cannot be reached"}. DNS resolution failed or page does not exist.`,
+                    bodySnippet: "Site can't be reached",
+                  });
+                } else {
+                  reject(new Error(chrome.runtime.lastError?.message || 'Failed to capture page snapshot.'));
+                }
+              })
+              .catch(() => {
+                reject(new Error(chrome.runtime.lastError?.message || 'Failed to capture page snapshot.'));
+              });
           } else if (res && res.success) {
             resolve(res.data);
           } else {
@@ -473,7 +522,8 @@ What is your next action?`;
           }
 
           if (currentTool.name === 'finish') {
-            finishSummary = currentTool.arguments.summary || thought || 'Task marked complete.';
+            const explicitSummary = currentTool.arguments.summary?.trim();
+            finishSummary = explicitSummary || 'Task completed successfully.';
             shouldFinish = true;
             executedResults.push({
               id: toolCallId,
@@ -540,16 +590,25 @@ What is your next action?`;
           } else if (currentTool.name === 'navigate') {
             const url = currentTool.arguments.url;
             this.callbacks.onLog?.(`Navigating tab #${tabId} to ${url}...`);
-            await new Promise<void>((resolve) => {
-              chrome.runtime.sendMessage({ action: 'navigate_tab', params: { tabId, url } }, () => {
-                setTimeout(resolve, 2000);
+            const navRes: any = await new Promise<any>((resolve) => {
+              chrome.runtime.sendMessage({ action: 'navigate_tab', params: { tabId, url } }, (res) => {
+                setTimeout(() => resolve(res || { success: true }), 1500);
               });
             });
-            executedResults.push({
-              id: toolCallId,
-              name: 'navigate',
-              resultStr: `Navigated to ${url}.`,
-            });
+
+            if (navRes && !navRes.success) {
+              executedResults.push({
+                id: toolCallId,
+                name: 'navigate',
+                resultStr: navRes.error || `Failed to navigate to ${url}: Site does not exist or could not be loaded.`,
+              });
+            } else {
+              executedResults.push({
+                id: toolCallId,
+                name: 'navigate',
+                resultStr: `Navigated to ${url}.`,
+              });
+            }
           } else {
             if (currentTool.name === 'read_page_content') {
               this.callbacks.onLog?.('Reading page DOM text...');

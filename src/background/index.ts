@@ -22,11 +22,33 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return;
       }
 
-      // Wait for page load completion
+      // Wait for page load completion and verify if page loaded or hit an error
       const listener = (tid: number, changeInfo: chrome.tabs.TabChangeInfo) => {
         if (tid === tabId && changeInfo.status === 'complete') {
           chrome.tabs.onUpdated.removeListener(listener);
-          sendResponse({ success: true, tab: updatedTab });
+          chrome.tabs.get(tabId, (finalTab) => {
+            const tabUrl = finalTab?.url || '';
+            const tabTitle = (finalTab?.title || '').toLowerCase();
+            const isError =
+              tabUrl.startsWith('chrome-error://') ||
+              tabTitle.includes("site can't be reached") ||
+              tabTitle.includes("site can’t be reached") ||
+              tabTitle.includes('err_name_not_resolved') ||
+              tabTitle.includes('err_connection_refused') ||
+              tabTitle.includes('server ip address could not be found') ||
+              tabTitle.includes('dns_probe_finished');
+
+            if (isError) {
+              sendResponse({
+                success: false,
+                error: `Failed to load ${url}: Site does not exist or DNS cannot be resolved (${finalTab?.title || 'ERR_NAME_NOT_RESOLVED'}).`,
+                isErrorPage: true,
+                tab: finalTab,
+              });
+            } else {
+              sendResponse({ success: true, tab: finalTab });
+            }
+          });
         }
       };
       chrome.tabs.onUpdated.addListener(listener);
@@ -34,7 +56,20 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       // Fallback timeout after 12 seconds in case onUpdated doesn't fire
       setTimeout(() => {
         chrome.tabs.onUpdated.removeListener(listener);
-        sendResponse({ success: true, timedOut: true });
+        chrome.tabs.get(tabId, (finalTab) => {
+          const tabUrl = finalTab?.url || '';
+          const tabTitle = (finalTab?.title || '').toLowerCase();
+          if (tabUrl.startsWith('chrome-error://') || tabTitle.includes("can't be reached") || tabTitle.includes("can’t be reached")) {
+            sendResponse({
+              success: false,
+              error: `Navigation timed out for ${url}: Site cannot be reached.`,
+              isErrorPage: true,
+              tab: finalTab,
+            });
+          } else {
+            sendResponse({ success: true, timedOut: true, tab: finalTab });
+          }
+        });
       }, 12000);
     });
     return true; // async

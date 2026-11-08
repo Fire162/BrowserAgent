@@ -34,7 +34,7 @@ export const Header: React.FC<HeaderProps> = ({
           <div>
             <div className="flex items-center gap-1.5">
               <span className="font-bold text-sm tracking-tight text-white">BrowserAgent</span>
-              <span className="text-[10px] bg-sky-500/10 text-sky-400 border border-sky-500/20 px-1 rounded font-mono">v1.1.6</span>
+              <span className="text-[10px] bg-sky-500/10 text-sky-400 border border-sky-500/20 px-1 rounded font-mono">v1.1.7</span>
             </div>
           </div>
         </div>
