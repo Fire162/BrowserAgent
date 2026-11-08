@@ -114,6 +114,40 @@ export const AGENT_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: 'read_page_content',
+    description: 'Read and extract textual content, articles, tables, search results, or paragraphs from the current webpage or a specific section. Use this instead of taking a screenshot whenever you need to read page text.',
+    parameters: {
+      type: 'object',
+      properties: {
+        selector: {
+          type: 'string',
+          description: 'Optional CSS selector to target a specific container (e.g. "article", "main", ".search-results", "#pricing", "table"). If omitted, reads the main readable content.',
+        },
+        maxCharacters: {
+          type: 'string',
+          description: 'Maximum characters of text to return (default "2500").',
+        },
+      },
+    },
+  },
+  {
+    name: 'get_element_text',
+    description: 'Read the full inner text, attributes (href, value, title), or table structure of a specific element identified by its numeric badge elementId or CSS selector.',
+    parameters: {
+      type: 'object',
+      properties: {
+        elementId: {
+          type: 'string',
+          description: 'The numeric badge index of the element to read.',
+        },
+        selector: {
+          type: 'string',
+          description: 'Alternative CSS selector for the element.',
+        },
+      },
+    },
+  },
+  {
     name: 'take_screenshot',
     description: 'Capture a visual screenshot of the current visible tab viewport. The captured image will be immediately provided to you in the next observation so you can visually inspect layout, charts, graphics, and elements.',
     parameters: {

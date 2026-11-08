@@ -1,5 +1,13 @@
 import { scanAndLabelElements, clearBadges } from './labeler';
-import { performClick, performType, performPressKey, performScroll, extractPageData } from './actions';
+import {
+  performClick,
+  performType,
+  performPressKey,
+  performScroll,
+  extractPageData,
+  readPageContent,
+  getElementText,
+} from './actions';
 
 (() => {
   if ((window as any).__browseragent_injected) {
@@ -93,6 +101,20 @@ import { performClick, performType, performPressKey, performScroll, extractPageD
                 notes: args.description || '',
               },
             };
+            break;
+
+          case 'read_page_content':
+            result = readPageContent({
+              selector: args.selector,
+              maxCharacters: args.maxCharacters,
+            });
+            break;
+
+          case 'get_element_text':
+            result = getElementText({
+              elementId: args.elementId,
+              selector: args.selector,
+            });
             break;
 
           default:

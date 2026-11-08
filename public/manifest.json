@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "BrowserAgent - Autonomous AI Web Navigator",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "description": "Your autonomous in-browser AI agent. Bring Your Own Key for OpenRouter, Gemini, Claude, Grok, DeepSeek, and OpenAI.",
   "permissions": [
     "sidePanel",

@@ -203,3 +203,120 @@ export function extractPageData(): { title: string; url: string; textContent: st
 
   return { title, url, textContent };
 }
+
+export function readPageContent(params: {
+  selector?: string;
+  maxCharacters?: number | string;
+}): { success: boolean; message: string; content?: string } {
+  const maxLen =
+    typeof params.maxCharacters === 'number'
+      ? params.maxCharacters
+      : parseInt(String(params.maxCharacters || '2500'), 10) || 2500;
+
+  let targetEl: HTMLElement | null = null;
+  if (params.selector && params.selector.trim()) {
+    try {
+      targetEl = document.querySelector<HTMLElement>(params.selector.trim());
+    } catch {
+      // Ignore invalid selector
+    }
+  }
+
+  // Fallback to primary article/main container or document.body
+  if (!targetEl) {
+    targetEl =
+      document.querySelector<HTMLElement>('article') ||
+      document.querySelector<HTMLElement>('main') ||
+      document.querySelector<HTMLElement>('[role="main"]') ||
+      document.querySelector<HTMLElement>('#content') ||
+      document.querySelector<HTMLElement>('.content') ||
+      document.body;
+  }
+
+  if (!targetEl) {
+    return { success: false, message: 'Could not find readable content on this page.' };
+  }
+
+  // Clone and sanitize (strip scripts, styles, svg, and badge overlays)
+  const clone = targetEl.cloneNode(true) as HTMLElement;
+  const elementsToRemove = clone.querySelectorAll(
+    'script, style, svg, noscript, iframe, #__browseragent_badge_container__'
+  );
+  elementsToRemove.forEach((el) => el.remove());
+
+  const rawText = clone.innerText || clone.textContent || '';
+  const cleaned = rawText
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .join('\n');
+
+  const truncated = cleaned.slice(0, maxLen);
+  const remaining =
+    cleaned.length > maxLen
+      ? `\n... [Remaining ${cleaned.length - maxLen} characters truncated; specify a more focused selector to read more]`
+      : '';
+
+  return {
+    success: true,
+    message: `Extracted ${truncated.length} characters of page text${
+      params.selector ? ` from "${params.selector}"` : ''
+    }:\n${truncated}${remaining}`,
+    content: truncated,
+  };
+}
+
+export function getElementText(params: {
+  elementId?: string | number;
+  selector?: string;
+}): { success: boolean; message: string; text?: string } {
+  const el = findTargetElement(params.elementId, params.selector);
+  if (!el) {
+    return {
+      success: false,
+      message: `Could not find element to read (id: ${params.elementId}, selector: ${params.selector})`,
+    };
+  }
+
+  flashElement(el);
+
+  const tagName = el.tagName.toLowerCase();
+  const innerText = (el.innerText || el.textContent || '').trim();
+  const value = (el as HTMLInputElement).value || '';
+  const href = (el as HTMLAnchorElement).href || '';
+  const placeholder = el.getAttribute('placeholder') || '';
+  const title = el.getAttribute('title') || '';
+  const ariaLabel = el.getAttribute('aria-label') || '';
+
+  const details: string[] = [];
+  if (innerText) details.push(`Text: "${innerText.slice(0, 1000)}"`);
+  if (value) details.push(`Value: "${value.slice(0, 500)}"`);
+  if (href) details.push(`Href: "${href}"`);
+  if (placeholder) details.push(`Placeholder: "${placeholder}"`);
+  if (title) details.push(`Title: "${title}"`);
+  if (ariaLabel) details.push(`Aria-Label: "${ariaLabel}"`);
+
+  // Format table rows if reading a table
+  if (tagName === 'table') {
+    const rows = Array.from(el.querySelectorAll('tr'))
+      .slice(0, 20)
+      .map((tr) => {
+        const cells = Array.from(tr.querySelectorAll('th, td')).map((c) => (c.textContent || '').trim());
+        return `| ${cells.join(' | ')} |`;
+      });
+    if (rows.length > 0) {
+      details.push(`Table content:\n${rows.join('\n')}`);
+    }
+  }
+
+  const message =
+    details.length > 0
+      ? `Element <${tagName}> details:\n${details.join('\n')}`
+      : `Element <${tagName}> is empty.`;
+
+  return {
+    success: true,
+    message,
+    text: innerText || value,
+  };
+}

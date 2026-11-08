@@ -551,6 +551,11 @@ What is your next action?`;
               resultStr: `Navigated to ${url}.`,
             });
           } else {
+            if (currentTool.name === 'read_page_content') {
+              this.callbacks.onLog?.('Reading page DOM text...');
+            } else if (currentTool.name === 'get_element_text') {
+              this.callbacks.onLog?.(`Reading element #${currentTool.arguments.elementId || currentTool.arguments.selector}...`);
+            }
             const domRes = await this.executeDOMAction(tabId, currentTool.name, currentTool.arguments);
             executedResults.push({
               id: toolCallId,
