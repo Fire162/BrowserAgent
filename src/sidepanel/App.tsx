@@ -8,10 +8,13 @@ import { AgentExecution, StepRecord, TargetTabInfo } from '../core/agent/loop';
 import { saveTask, TaskRecord } from '../core/storage/db';
 import { PROVIDERS } from '../core/llm/providers/registry';
 
-export interface UserPromptEntry {
+export interface ChatTurn {
   id: string;
-  text: string;
+  userPrompt: string;
   timestamp: number;
+  steps: StepRecord[];
+  resultSummary?: string | null;
+  status: 'running' | 'completed' | 'failed' | 'paused';
 }
 
 export const App: React.FC = () => {
@@ -30,11 +33,9 @@ export const App: React.FC = () => {
   const [liveStatus, setLiveStatus] = useState('');
   const [liveCostUSD, setLiveCostUSD] = useState(0);
   const [liveTokens, setLiveTokens] = useState(0);
-  const [steps, setSteps] = useState<StepRecord[]>([]);
-  const [finalResult, setFinalResult] = useState<string | null>(null);
+  const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
   const [targetTab, setTargetTab] = useState<TargetTabInfo | null>(null);
-  const [userPrompts, setUserPrompts] = useState<UserPromptEntry[]>([]);
 
   const activeExecutionRef = useRef<AgentExecution | null>(null);
   const userPromptResolverRef = useRef<((answer: string) => void) | null>(null);
@@ -81,14 +82,12 @@ export const App: React.FC = () => {
     }
     setIsRunning(false);
     setIsPaused(false);
-    setSteps([]);
-    setFinalResult(null);
+    setTurns([]);
     setCurrentStep(1);
     setLiveCostUSD(0);
     setLiveTokens(0);
     setPendingQuestion(null);
     setLiveStatus('');
-    setUserPrompts([]);
   };
 
   if (loading) {
@@ -113,15 +112,22 @@ export const App: React.FC = () => {
       return;
     }
 
+    const initialTurn: ChatTurn = {
+      id: `turn_${Date.now()}`,
+      userPrompt: goal,
+      timestamp: Date.now(),
+      steps: [],
+      resultSummary: null,
+      status: 'running',
+    };
+
     setIsRunning(true);
     setIsPaused(false);
-    setSteps([]);
-    setFinalResult(null);
+    setTurns([initialTurn]);
     setCurrentStep(1);
     setLiveCostUSD(0);
     setLiveTokens(0);
     setPendingQuestion(null);
-    setUserPrompts([{ id: `prompt_${Date.now()}`, text: goal, timestamp: Date.now() }]);
     setLiveStatus('Initializing agent on assigned tab...');
 
     const startTime = Date.now();
@@ -134,14 +140,22 @@ export const App: React.FC = () => {
           setCurrentStep(num);
         },
         onStepComplete: (step) => {
-          setSteps((prev) => {
-            const idx = prev.findIndex((s) => s.stepNumber === step.stepNumber);
-            if (idx >= 0) {
-              const next = [...prev];
-              next[idx] = { ...step };
-              return next;
+          setTurns((prev) => {
+            if (prev.length === 0) return prev;
+            const lastIdx = prev.length - 1;
+            const currentTurn = prev[lastIdx];
+            const existingStepIdx = currentTurn.steps.findIndex((s) => s.stepNumber === step.stepNumber);
+            let updatedSteps: StepRecord[];
+            if (existingStepIdx >= 0) {
+              updatedSteps = [...currentTurn.steps];
+              updatedSteps[existingStepIdx] = { ...step };
+            } else {
+              updatedSteps = [...currentTurn.steps, step];
             }
-            return [...prev, step];
+            const updatedTurn = { ...currentTurn, steps: updatedSteps };
+            const nextTurns = [...prev];
+            nextTurns[lastIdx] = updatedTurn;
+            return nextTurns;
           });
         },
         onCostUpdate: (cost, tokens) => {
@@ -152,7 +166,17 @@ export const App: React.FC = () => {
           setLiveStatus(msg);
         },
         onFinish: (summary) => {
-          setFinalResult(summary);
+          setTurns((prev) => {
+            if (prev.length === 0) return prev;
+            const lastIdx = prev.length - 1;
+            const nextTurns = [...prev];
+            nextTurns[lastIdx] = {
+              ...nextTurns[lastIdx],
+              resultSummary: summary,
+              status: 'completed',
+            };
+            return nextTurns;
+          });
           setLiveStatus('Task completed.');
         },
         onError: (err) => {
@@ -177,7 +201,18 @@ export const App: React.FC = () => {
 
     try {
       const summary = await execution.run();
-      setFinalResult(summary);
+
+      setTurns((prev) => {
+        if (prev.length === 0) return prev;
+        const lastIdx = prev.length - 1;
+        const nextTurns = [...prev];
+        nextTurns[lastIdx] = {
+          ...nextTurns[lastIdx],
+          resultSummary: summary,
+          status: execution.isPaused() ? 'paused' : 'completed',
+        };
+        return nextTurns;
+      });
 
       if (execution.isPaused()) {
         setIsPaused(true);
@@ -198,7 +233,17 @@ export const App: React.FC = () => {
       }
     } catch (err: any) {
       console.error('[BrowserAgent] Execution error:', err);
-      setFinalResult(`Task terminated with error: ${err.message}`);
+      setTurns((prev) => {
+        if (prev.length === 0) return prev;
+        const lastIdx = prev.length - 1;
+        const nextTurns = [...prev];
+        nextTurns[lastIdx] = {
+          ...nextTurns[lastIdx],
+          resultSummary: `Task terminated with error: ${err.message}`,
+          status: 'failed',
+        };
+        return nextTurns;
+      });
 
       await saveTask({
         id: `task_${Date.now()}`,
@@ -217,10 +262,14 @@ export const App: React.FC = () => {
       setIsRunning(false);
       setPendingQuestion(null);
       // Guarantee all steps are finalized (no spinning loaders)
-      setSteps((prev) =>
-        prev.map((s) => ({
-          ...s,
-          status: s.status === 'running' ? (s.resultMessage?.includes('failed') ? 'failed' : 'success') : s.status,
+      setTurns((prev) =>
+        prev.map((turn) => ({
+          ...turn,
+          status: turn.status === 'running' ? 'completed' : turn.status,
+          steps: turn.steps.map((s) => ({
+            ...s,
+            status: s.status === 'running' ? (s.resultMessage?.includes('failed') ? 'failed' : 'success') : s.status,
+          })),
         }))
       );
     }
@@ -240,14 +289,34 @@ export const App: React.FC = () => {
       return;
     }
 
+    const followUpTurn: ChatTurn = {
+      id: `turn_${Date.now()}`,
+      userPrompt: followUpText,
+      timestamp: Date.now(),
+      steps: [],
+      resultSummary: null,
+      status: 'running',
+    };
+
     setIsRunning(true);
     setIsPaused(false);
-    setUserPrompts((prev) => [...prev, { id: `prompt_${Date.now()}`, text: followUpText, timestamp: Date.now() }]);
+    setTurns((prev) => [...prev, followUpTurn]);
     setLiveStatus('Continuing task on assigned tab with follow-up...');
 
     try {
       const summary = await activeExecutionRef.current.run(followUpText);
-      setFinalResult(summary);
+
+      setTurns((prev) => {
+        if (prev.length === 0) return prev;
+        const lastIdx = prev.length - 1;
+        const nextTurns = [...prev];
+        nextTurns[lastIdx] = {
+          ...nextTurns[lastIdx],
+          resultSummary: summary,
+          status: activeExecutionRef.current?.isPaused() ? 'paused' : 'completed',
+        };
+        return nextTurns;
+      });
 
       if (activeExecutionRef.current.isPaused()) {
         setIsPaused(true);
@@ -271,10 +340,14 @@ export const App: React.FC = () => {
     } finally {
       setIsRunning(false);
       // Guarantee all steps are finalized
-      setSteps((prev) =>
-        prev.map((s) => ({
-          ...s,
-          status: s.status === 'running' ? (s.resultMessage?.includes('failed') ? 'failed' : 'success') : s.status,
+      setTurns((prev) =>
+        prev.map((turn) => ({
+          ...turn,
+          status: turn.status === 'running' ? 'completed' : turn.status,
+          steps: turn.steps.map((s) => ({
+            ...s,
+            status: s.status === 'running' ? (s.resultMessage?.includes('failed') ? 'failed' : 'success') : s.status,
+          })),
         }))
       );
     }
@@ -295,13 +368,20 @@ export const App: React.FC = () => {
   };
 
   const handleResumeHistoryTask = (task: TaskRecord) => {
-    setSteps(task.steps || []);
-    setFinalResult(task.resultSummary || null);
+    const historyTurn: ChatTurn = {
+      id: `history_${task.createdAt}`,
+      userPrompt: task.goal,
+      timestamp: task.createdAt,
+      steps: task.steps || [],
+      resultSummary: task.resultSummary || null,
+      status: task.status === 'completed' ? 'completed' : 'failed',
+    };
+
+    setTurns(task.turns && task.turns.length > 0 ? task.turns : [historyTurn]);
     setCurrentStep((task.steps?.length || 0) + 1);
     setIsPaused(false);
     setIsRunning(false);
     setPendingQuestion(null);
-    setUserPrompts([{ id: `history_${task.createdAt}`, text: task.goal, timestamp: task.createdAt }]);
     setLiveStatus(`Loaded past task: "${task.goal.slice(0, 35)}...". Enter a follow-up to continue in this same chat.`);
 
     const execution = new AgentExecution(
@@ -310,14 +390,22 @@ export const App: React.FC = () => {
       {
         onStepStart: (num) => setCurrentStep(num),
         onStepComplete: (step) => {
-          setSteps((prev) => {
-            const idx = prev.findIndex((s) => s.stepNumber === step.stepNumber);
-            if (idx >= 0) {
-              const next = [...prev];
-              next[idx] = { ...step };
-              return next;
+          setTurns((prev) => {
+            if (prev.length === 0) return prev;
+            const lastIdx = prev.length - 1;
+            const currentTurn = prev[lastIdx];
+            const existingStepIdx = currentTurn.steps.findIndex((s) => s.stepNumber === step.stepNumber);
+            let updatedSteps: StepRecord[];
+            if (existingStepIdx >= 0) {
+              updatedSteps = [...currentTurn.steps];
+              updatedSteps[existingStepIdx] = { ...step };
+            } else {
+              updatedSteps = [...currentTurn.steps, step];
             }
-            return [...prev, step];
+            const updatedTurn = { ...currentTurn, steps: updatedSteps };
+            const nextTurns = [...prev];
+            nextTurns[lastIdx] = updatedTurn;
+            return nextTurns;
           });
         },
         onCostUpdate: (cost, tokens) => {
@@ -326,7 +414,17 @@ export const App: React.FC = () => {
         },
         onLog: (msg) => setLiveStatus(msg),
         onFinish: (summary) => {
-          setFinalResult(summary);
+          setTurns((prev) => {
+            if (prev.length === 0) return prev;
+            const lastIdx = prev.length - 1;
+            const nextTurns = [...prev];
+            nextTurns[lastIdx] = {
+              ...nextTurns[lastIdx],
+              resultSummary: summary,
+              status: 'completed',
+            };
+            return nextTurns;
+          });
           setLiveStatus('Task completed.');
         },
         onError: (err) => setLiveStatus(`Error: ${err.message}`),
@@ -374,14 +472,12 @@ export const App: React.FC = () => {
             onResumeTask={handleResumeTask}
             onSendSteering={handleSendSteering}
             onNewChat={handleNewChat}
-            userPrompts={userPrompts}
+            turns={turns}
             currentStep={currentStep}
             maxBudgetUSD={settings.agent.maxBudgetUSD}
             liveCostUSD={liveCostUSD}
             liveTokens={liveTokens}
             liveStatus={liveStatus}
-            steps={steps}
-            finalResult={finalResult}
             activeProvider={activeDef.name}
             activeModel={currentModel}
             pendingQuestion={pendingQuestion}

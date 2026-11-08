@@ -18,10 +18,10 @@ import {
   RotateCcw,
   User,
 } from 'lucide-react';
-import { StepRecord, TargetTabInfo } from '../../core/agent/loop';
+import { TargetTabInfo } from '../../core/agent/loop';
 import { StepTimeline } from './StepTimeline';
 import { MarkdownViewer } from './MarkdownViewer';
-import { UserPromptEntry } from '../App';
+import { ChatTurn } from '../App';
 
 interface ChatViewProps {
   isRunning: boolean;
@@ -32,14 +32,12 @@ interface ChatViewProps {
   onResumeTask: (followUp: string) => void;
   onSendSteering: (guidance: string) => void;
   onNewChat: () => void;
-  userPrompts?: UserPromptEntry[];
+  turns: ChatTurn[];
   currentStep: number;
   maxBudgetUSD: number;
   liveCostUSD: number;
   liveTokens: number;
   liveStatus: string;
-  steps: StepRecord[];
-  finalResult: string | null;
   activeProvider: string;
   activeModel: string;
   pendingQuestion?: string | null;
@@ -65,14 +63,12 @@ export const ChatView: React.FC<ChatViewProps> = ({
   onResumeTask,
   onSendSteering,
   onNewChat,
-  userPrompts = [],
+  turns,
   currentStep,
   maxBudgetUSD,
   liveCostUSD,
   liveTokens,
   liveStatus,
-  steps,
-  finalResult,
   activeProvider,
   activeModel,
   pendingQuestion,
@@ -84,14 +80,14 @@ export const ChatView: React.FC<ChatViewProps> = ({
   const [inputText, setInputText] = useState('');
   const [answerInput, setAnswerInput] = useState('');
   const [steeringToast, setSteeringToast] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [steps, liveStatus, finalResult, pendingQuestion, isPaused, userPrompts]);
+  }, [turns, liveStatus, pendingQuestion, isPaused, isRunning]);
 
   const handleSubmit = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -108,7 +104,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
     }
 
     if (hasActiveSession) {
-      // Continue in the SAME chat! Does not wipe previous steps or context!
+      // Continue in the SAME chat! Keeps all previous turns & context intact!
       onResumeTask(trimmed);
       setInputText('');
       return;
@@ -125,37 +121,31 @@ export const ChatView: React.FC<ChatViewProps> = ({
     setAnswerInput('');
   };
 
-  const handleCopyResult = () => {
-    if (finalResult) {
-      navigator.clipboard.writeText(finalResult);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1800);
-    }
+  const handleCopyResult = (content: string, turnId: string) => {
+    navigator.clipboard.writeText(content);
+    setCopiedId(turnId);
+    setTimeout(() => setCopiedId(null), 1800);
   };
 
-  const handleDownloadMarkdown = () => {
-    if (!finalResult) return;
-    const blob = new Blob([finalResult], { type: 'text/markdown;charset=utf-8' });
+  const handleDownloadMarkdown = (content: string, turnIdx: number) => {
+    const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `browseragent-summary-${Date.now()}.md`;
+    a.download = `browseragent-summary-turn${turnIdx + 1}-${Date.now()}.md`;
     a.click();
     URL.revokeObjectURL(url);
   };
 
-  const handleDownloadJSON = () => {
-    if (!finalResult) return;
+  const handleDownloadJSON = (turn: ChatTurn, turnIdx: number) => {
     const data = {
-      timestamp: new Date().toISOString(),
+      timestamp: new Date(turn.timestamp).toISOString(),
       provider: activeProvider,
       model: activeModel,
-      totalCostUSD: liveCostUSD,
-      totalTokens: liveTokens,
-      stepsCount: steps.length,
-      userPrompts: userPrompts.map((p) => p.text),
-      summary: finalResult,
-      steps: steps.map((s) => ({
+      turnNumber: turnIdx + 1,
+      userPrompt: turn.userPrompt,
+      summary: turn.resultSummary,
+      steps: turn.steps.map((s) => ({
         step: s.stepNumber,
         thought: s.thought,
         toolCalls: s.toolCalls || (s.toolCall ? [s.toolCall] : []),
@@ -166,7 +156,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `browseragent-report-${Date.now()}.json`;
+    a.download = `browseragent-turn${turnIdx + 1}-${Date.now()}.json`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -227,10 +217,10 @@ export const ChatView: React.FC<ChatViewProps> = ({
         </div>
       </div>
 
-      {/* Scrollable Timeline & Results View */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto p-3.5 space-y-4 pt-1">
-        {/* Welcome State when no tasks or steps */}
-        {steps.length === 0 && !finalResult && !pendingQuestion && userPrompts.length === 0 && (
+      {/* Scrollable Chronological Chat Stream */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto p-3.5 space-y-5 pt-1">
+        {/* Welcome State when no conversation has started */}
+        {turns.length === 0 && (
           <div className="space-y-4 pt-2">
             <div className="text-center py-6 px-4 bg-slate-900/40 border border-slate-800/80 rounded-2xl">
               <div className="h-10 w-10 mx-auto rounded-xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center mb-3">
@@ -272,178 +262,191 @@ export const ChatView: React.FC<ChatViewProps> = ({
           </div>
         )}
 
-        {/* User Conversation Prompts */}
-        {userPrompts.length > 0 && (
-          <div className="space-y-2.5">
-            {userPrompts.map((p, idx) => (
-              <div key={p.id} className="flex justify-end">
-                <div className="bg-sky-600/15 border border-sky-500/30 rounded-2xl rounded-tr-sm px-3.5 py-2 text-xs text-white max-w-[85%] leading-relaxed shadow-sm">
+        {/* Chronological Chat Turns: Goal -> Agent Reply -> Follow-up -> Next Reply */}
+        {turns.map((turn, tIdx) => {
+          const isLatestTurn = tIdx === turns.length - 1;
+
+          return (
+            <div key={turn.id} className="space-y-3.5 pb-2">
+              {/* 1. User Message Bubble */}
+              <div className="flex justify-end">
+                <div className="bg-sky-600/20 border border-sky-500/35 rounded-2xl rounded-tr-sm px-3.5 py-2 text-xs text-white max-w-[85%] leading-relaxed shadow-sm">
                   <div className="flex items-center gap-1.5 text-[10px] font-semibold text-sky-400 mb-0.5">
                     <User className="h-3 w-3" />
-                    <span>{idx === 0 ? 'Initial Goal' : 'Follow-up Instruction'}</span>
+                    <span>{tIdx === 0 ? 'Initial Goal' : 'Follow-up Instruction'}</span>
                   </div>
-                  <p className="font-sans font-medium whitespace-pre-wrap">{p.text}</p>
+                  <p className="font-sans font-medium whitespace-pre-wrap">{turn.userPrompt}</p>
                 </div>
               </div>
-            ))}
-          </div>
-        )}
 
-        {/* Live Running Status Banner */}
-        {isRunning && (
-          <div className="bg-sky-500/10 border border-sky-500/30 rounded-xl p-3 space-y-2.5">
-            <div className="flex items-center justify-between text-xs">
-              <div className="flex items-center gap-2">
-                <div className="h-2 w-2 rounded-full bg-sky-400 animate-ping" />
-                <span className="font-semibold text-sky-300">
-                  {pendingQuestion
-                    ? 'Paused: Waiting for your input'
-                    : isPaused
-                    ? 'Paused: Awaiting follow-up'
-                    : 'Executing Task on Assigned Tab...'}
-                </span>
-              </div>
-              <div className="flex items-center gap-2 font-mono text-[11px]">
-                <span className="text-slate-400">Step {currentStep}</span>
-                <span className="text-slate-600">•</span>
-                <span className="text-emerald-400 font-bold">
-                  ${liveCostUSD.toFixed(3)}
-                  {maxBudgetUSD > 0 ? (
-                    <span className="text-slate-500 font-normal"> / ${maxBudgetUSD.toFixed(2)}</span>
-                  ) : (
-                    <span className="text-slate-500 font-normal"> (No limit)</span>
-                  )}
-                </span>
-              </div>
-            </div>
-
-            {/* Visual Budget Progress Bar */}
-            {maxBudgetUSD > 0 && (
-              <div className="space-y-1">
-                <div className="w-full bg-slate-900 rounded-full h-1.5 overflow-hidden border border-slate-800">
-                  <div
-                    className={`h-full transition-all duration-300 ${
-                      budgetPercent >= 90
-                        ? 'bg-rose-500'
-                        : budgetPercent >= 70
-                        ? 'bg-amber-400'
-                        : 'bg-emerald-400'
-                    }`}
-                    style={{ width: `${budgetPercent}%` }}
-                  />
-                </div>
-              </div>
-            )}
-
-            {liveStatus && (
-              <div className="flex items-center gap-2 text-xs text-slate-300 font-mono bg-slate-950/60 px-2.5 py-1.5 rounded-lg border border-slate-800">
-                <Terminal className="h-3.5 w-3.5 text-slate-400 shrink-0" />
-                <span className="truncate">{liveStatus}</span>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Interactive ask_user Question Card */}
-        {pendingQuestion && (
-          <div className="bg-gradient-to-br from-amber-950/40 to-slate-900 border border-amber-500/50 rounded-xl p-3.5 space-y-3 shadow-lg shadow-amber-500/10 animate-fade-in">
-            <div className="flex items-start gap-2.5">
-              <div className="h-7 w-7 rounded-lg bg-amber-500/20 border border-amber-500/30 flex items-center justify-center shrink-0 mt-0.5">
-                <HelpCircle className="h-4 w-4 text-amber-400" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs font-bold text-amber-300">Agent Question / Action Needed</span>
-                  <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-ping" />
-                </div>
-                <p className="text-xs text-slate-200 mt-1 leading-relaxed font-medium">
-                  {pendingQuestion}
-                </p>
-              </div>
-            </div>
-
-            <div className="space-y-2 pt-1 border-t border-slate-800/80">
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={answerInput}
-                  onChange={(e) => setAnswerInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      handleSendAnswer(answerInput);
-                    }
-                  }}
-                  placeholder="Type your response or clarification here..."
-                  className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-400"
+              {/* 2. Action Steps Timeline for this specific turn */}
+              {turn.steps.length > 0 && (
+                <StepTimeline
+                  steps={turn.steps}
+                  isRunning={isRunning && isLatestTurn}
+                  isPaused={isPaused && isLatestTurn}
                 />
-                <button
-                  type="button"
-                  onClick={() => handleSendAnswer(answerInput)}
-                  disabled={!answerInput.trim()}
-                  className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-black font-semibold rounded-lg text-xs flex items-center gap-1 transition-colors"
-                >
-                  <span>Reply</span>
-                  <ArrowRight className="h-3 w-3" />
-                </button>
-              </div>
+              )}
 
-              <div className="flex items-center justify-between text-[11px] pt-1">
-                <span className="text-slate-400">If you completed a manual action (e.g. CAPTCHA / Login):</span>
-                <button
-                  type="button"
-                  onClick={() => handleSendAnswer('I have completed the manual action on the page. Please continue.')}
-                  className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-sky-300 rounded border border-slate-700 text-[10px] font-medium transition-colors"
-                >
-                  Done, Continue →
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+              {/* 3. Live Running Status Banner (if this turn is currently in progress) */}
+              {isRunning && isLatestTurn && (
+                <div className="bg-sky-500/10 border border-sky-500/30 rounded-xl p-3 space-y-2.5 animate-fade-in">
+                  <div className="flex items-center justify-between text-xs">
+                    <div className="flex items-center gap-2">
+                      <div className="h-2 w-2 rounded-full bg-sky-400 animate-ping" />
+                      <span className="font-semibold text-sky-300">
+                        {pendingQuestion
+                          ? 'Paused: Waiting for your input'
+                          : isPaused
+                          ? 'Paused: Awaiting follow-up'
+                          : 'Executing on Assigned Tab...'}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 font-mono text-[11px]">
+                      <span className="text-slate-400">Step {currentStep}</span>
+                      <span className="text-slate-600">•</span>
+                      <span className="text-emerald-400 font-bold">
+                        ${liveCostUSD.toFixed(3)}
+                        {maxBudgetUSD > 0 ? (
+                          <span className="text-slate-500 font-normal"> / ${maxBudgetUSD.toFixed(2)}</span>
+                        ) : (
+                          <span className="text-slate-500 font-normal"> (No limit)</span>
+                        )}
+                      </span>
+                    </div>
+                  </div>
 
-        {/* Action Steps Timeline (with isRunning and isPaused props to prevent spinning loaders on completed steps) */}
-        <StepTimeline steps={steps} isRunning={isRunning} isPaused={isPaused} />
+                  {/* Visual Budget Progress Bar */}
+                  {maxBudgetUSD > 0 && (
+                    <div className="space-y-1">
+                      <div className="w-full bg-slate-900 rounded-full h-1.5 overflow-hidden border border-slate-800">
+                        <div
+                          className={`h-full transition-all duration-300 ${
+                            budgetPercent >= 90
+                              ? 'bg-rose-500'
+                              : budgetPercent >= 70
+                              ? 'bg-amber-400'
+                              : 'bg-emerald-400'
+                          }`}
+                          style={{ width: `${budgetPercent}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
 
-        {/* Final Result Card with Data Export */}
-        {finalResult && (
-          <div className="bg-gradient-to-b from-slate-900 to-slate-950 border border-emerald-500/30 rounded-xl p-3.5 space-y-2.5 shadow-lg">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-              <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-400">
-                <Check className="h-4 w-4" />
-                <span>Task Summary</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <button
-                  onClick={handleDownloadMarkdown}
-                  title="Download report as Markdown file (.md)"
-                  className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-white px-2 py-0.5 rounded bg-slate-800/80 hover:bg-slate-700 transition-colors"
-                >
-                  <FileText className="h-3 w-3 text-sky-400" />
-                  <span>.MD</span>
-                </button>
-                <button
-                  onClick={handleDownloadJSON}
-                  title="Download structured data and steps as JSON (.json)"
-                  className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-white px-2 py-0.5 rounded bg-slate-800/80 hover:bg-slate-700 transition-colors"
-                >
-                  <Download className="h-3 w-3 text-emerald-400" />
-                  <span>.JSON</span>
-                </button>
-                <button
-                  onClick={handleCopyResult}
-                  className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-white px-2 py-0.5 rounded bg-slate-800/80 hover:bg-slate-700 transition-colors"
-                >
-                  {copied ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
-                  <span>{copied ? 'Copied' : 'Copy'}</span>
-                </button>
-              </div>
+                  {liveStatus && (
+                    <div className="flex items-center gap-2 text-xs text-slate-300 font-mono bg-slate-950/60 px-2.5 py-1.5 rounded-lg border border-slate-800">
+                      <Terminal className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                      <span className="truncate">{liveStatus}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* 4. Interactive ask_user Question Card */}
+              {pendingQuestion && isLatestTurn && (
+                <div className="bg-gradient-to-br from-amber-950/40 to-slate-900 border border-amber-500/50 rounded-xl p-3.5 space-y-3 shadow-lg shadow-amber-500/10 animate-fade-in">
+                  <div className="flex items-start gap-2.5">
+                    <div className="h-7 w-7 rounded-lg bg-amber-500/20 border border-amber-500/30 flex items-center justify-center shrink-0 mt-0.5">
+                      <HelpCircle className="h-4 w-4 text-amber-400" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-bold text-amber-300">Agent Question / Action Needed</span>
+                        <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-ping" />
+                      </div>
+                      <p className="text-xs text-slate-200 mt-1 leading-relaxed font-medium">
+                        {pendingQuestion}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2 pt-1 border-t border-slate-800/80">
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={answerInput}
+                        onChange={(e) => setAnswerInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleSendAnswer(answerInput);
+                          }
+                        }}
+                        placeholder="Type your response or clarification here..."
+                        className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-400"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleSendAnswer(answerInput)}
+                        disabled={!answerInput.trim()}
+                        className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-black font-semibold rounded-lg text-xs flex items-center gap-1 transition-colors"
+                      >
+                        <span>Reply</span>
+                        <ArrowRight className="h-3 w-3" />
+                      </button>
+                    </div>
+
+                    <div className="flex items-center justify-between text-[11px] pt-1">
+                      <span className="text-slate-400">If you completed a manual action (e.g. CAPTCHA / Login):</span>
+                      <button
+                        type="button"
+                        onClick={() => handleSendAnswer('I have completed the manual action on the page. Please continue.')}
+                        className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-sky-300 rounded border border-slate-700 text-[10px] font-medium transition-colors"
+                      >
+                        Done, Continue →
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* 5. Agent Reply / Task Summary for this specific turn */}
+              {turn.resultSummary && (
+                <div className="bg-gradient-to-b from-slate-900 to-slate-950 border border-emerald-500/30 rounded-xl p-3.5 space-y-2.5 shadow-lg">
+                  <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                    <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-400">
+                      <Check className="h-4 w-4" />
+                      <span>{tIdx === 0 ? 'Task Summary' : `Follow-up #${tIdx} Result`}</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => handleDownloadMarkdown(turn.resultSummary!, tIdx)}
+                        title="Download report as Markdown file (.md)"
+                        className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-white px-2 py-0.5 rounded bg-slate-800/80 hover:bg-slate-700 transition-colors"
+                      >
+                        <FileText className="h-3 w-3 text-sky-400" />
+                        <span>.MD</span>
+                      </button>
+                      <button
+                        onClick={() => handleDownloadJSON(turn, tIdx)}
+                        title="Download structured data as JSON (.json)"
+                        className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-white px-2 py-0.5 rounded bg-slate-800/80 hover:bg-slate-700 transition-colors"
+                      >
+                        <Download className="h-3 w-3 text-emerald-400" />
+                        <span>.JSON</span>
+                      </button>
+                      <button
+                        onClick={() => handleCopyResult(turn.resultSummary!, turn.id)}
+                        className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-white px-2 py-0.5 rounded bg-slate-800/80 hover:bg-slate-700 transition-colors"
+                      >
+                        {copiedId === turn.id ? (
+                          <Check className="h-3 w-3 text-emerald-400" />
+                        ) : (
+                          <Copy className="h-3 w-3" />
+                        )}
+                        <span>{copiedId === turn.id ? 'Copied' : 'Copy'}</span>
+                      </button>
+                    </div>
+                  </div>
+                  <div className="bg-slate-950/60 p-3 rounded-lg border border-slate-800/80">
+                    <MarkdownViewer content={turn.resultSummary} />
+                  </div>
+                </div>
+              )}
             </div>
-            <div className="bg-slate-950/60 p-3 rounded-lg border border-slate-800/80">
-              <MarkdownViewer content={finalResult} />
-            </div>
-          </div>
-        )}
+          );
+        })}
       </div>
 
       {/* Steering Confirmation Toast */}
@@ -467,7 +470,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
                   : isPaused
                   ? "Task paused. Enter follow-up instruction (Ctrl+Enter)..."
                   : hasActiveSession
-                  ? "Ask a follow-up or next instruction in this same chat (Ctrl+Enter)..."
+                  ? "Ask follow-up or next instruction in this same chat (Ctrl+Enter)..."
                   : "Give a task on assigned tab (Ctrl+Enter to start)..."
               }
               rows={2}

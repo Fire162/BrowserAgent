@@ -11,6 +11,7 @@ export interface TaskRecord {
   resultSummary?: string;
   steps?: any[];
   messages?: any[];
+  turns?: any[];
   createdAt: number;
   completedAt?: number;
 }
