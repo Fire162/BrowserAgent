@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ChevronDown, ChevronRight, CheckCircle2, AlertCircle, Loader2, Play } from 'lucide-react';
+import { ChevronDown, ChevronRight, CheckCircle2, AlertCircle, Loader2, Image as ImageIcon, X } from 'lucide-react';
 import { StepRecord } from '../../core/agent/loop';
 
 interface StepTimelineProps {
@@ -8,6 +8,7 @@ interface StepTimelineProps {
 
 export const StepTimeline: React.FC<StepTimelineProps> = ({ steps }) => {
   const [expandedStep, setExpandedStep] = useState<number | null>(null);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   if (steps.length === 0) {
     return null;
@@ -61,6 +62,12 @@ export const StepTimeline: React.FC<StepTimelineProps> = ({ steps }) => {
                 </div>
 
                 <div className="flex items-center gap-1.5 ml-2 shrink-0">
+                  {step.screenshotUrl && (
+                    <span className="text-[10px] text-sky-400 flex items-center gap-0.5 bg-sky-500/10 px-1 py-0.5 rounded border border-sky-500/20">
+                      <ImageIcon className="h-3 w-3" />
+                      <span>Snap</span>
+                    </span>
+                  )}
                   {step.costUSD !== undefined && step.costUSD > 0 && (
                     <span className="text-[10px] text-emerald-400 font-mono bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
                       +${step.costUSD.toFixed(4)}
@@ -78,6 +85,21 @@ export const StepTimeline: React.FC<StepTimelineProps> = ({ steps }) => {
                     <div>
                       <span className="font-semibold text-slate-400 block mb-0.5">Reasoning:</span>
                       <p className="text-slate-300 leading-relaxed font-sans">{step.thought}</p>
+                    </div>
+                  )}
+
+                  {step.screenshotUrl && (
+                    <div>
+                      <span className="font-semibold text-slate-400 block mb-1 flex items-center gap-1">
+                        <ImageIcon className="h-3 w-3 text-sky-400" />
+                        <span>Captured Screenshot (Click to expand):</span>
+                      </span>
+                      <img
+                        src={step.screenshotUrl}
+                        alt={`Screenshot step ${step.stepNumber}`}
+                        onClick={() => setPreviewImage(step.screenshotUrl!)}
+                        className="rounded-lg border border-slate-700/80 max-h-36 object-contain bg-black cursor-pointer hover:border-sky-400 transition-colors shadow-sm"
+                      />
                     </div>
                   )}
 
@@ -104,6 +126,31 @@ export const StepTimeline: React.FC<StepTimelineProps> = ({ steps }) => {
           );
         })}
       </div>
+
+      {/* Fullscreen Screenshot Modal */}
+      {previewImage && (
+        <div
+          className="fixed inset-0 z-50 bg-black/90 backdrop-blur-sm flex flex-col p-4 animate-fade-in"
+          onClick={() => setPreviewImage(null)}
+        >
+          <div className="flex justify-between items-center text-xs text-slate-300 mb-2">
+            <span>Screenshot View</span>
+            <button
+              onClick={() => setPreviewImage(null)}
+              className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-white"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="flex-1 flex items-center justify-center overflow-auto">
+            <img
+              src={previewImage}
+              alt="Screenshot full view"
+              className="max-w-full max-h-full rounded-lg shadow-2xl object-contain border border-slate-800"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -114,6 +114,19 @@ export const AGENT_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: 'take_screenshot',
+    description: 'Capture a visual screenshot of the current visible tab viewport to inspect visual layout, images, charts, or verify visual appearance.',
+    parameters: {
+      type: 'object',
+      properties: {
+        reason: {
+          type: 'string',
+          description: 'Why you need a screenshot of the visible screen.',
+        },
+      },
+    },
+  },
+  {
     name: 'extract_data',
     description: 'Extract specific text, data, table rows, or answers from the current page.',
     parameters: {

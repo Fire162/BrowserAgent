@@ -5,7 +5,7 @@ import { ChatView } from './components/ChatView';
 import { HistoryView } from './components/HistoryView';
 import { useSettings } from './hooks/useSettings';
 import { AgentExecution, StepRecord } from '../core/agent/loop';
-import { saveTask } from '../core/storage/db';
+import { saveTask, TaskRecord } from '../core/storage/db';
 import { PROVIDERS } from '../core/llm/providers/registry';
 
 export const App: React.FC = () => {
@@ -19,6 +19,7 @@ export const App: React.FC = () => {
 
   const [currentTab, setCurrentTab] = useState<ActiveTab>('chat');
   const [isRunning, setIsRunning] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
   const [currentStep, setCurrentStep] = useState(1);
   const [liveStatus, setLiveStatus] = useState('');
   const [liveCostUSD, setLiveCostUSD] = useState(0);
@@ -53,6 +54,7 @@ export const App: React.FC = () => {
     }
 
     setIsRunning(true);
+    setIsPaused(false);
     setSteps([]);
     setFinalResult(null);
     setCurrentStep(1);
@@ -62,7 +64,6 @@ export const App: React.FC = () => {
     setLiveStatus('Initializing agent...');
 
     const startTime = Date.now();
-    let recordedSteps: StepRecord[] = [];
 
     const execution = new AgentExecution(settings, goal, {
       onStepStart: (num) => {
@@ -70,7 +71,6 @@ export const App: React.FC = () => {
       },
       onStepComplete: (step) => {
         setSteps((prev) => [...prev, step]);
-        recordedSteps.push(step);
       },
       onCostUpdate: (cost, tokens) => {
         setLiveCostUSD(cost);
@@ -100,17 +100,23 @@ export const App: React.FC = () => {
       const summary = await execution.run();
       setFinalResult(summary);
 
-      await saveTask({
-        id: `task_${Date.now()}`,
-        goal,
-        provider: activeDef.name,
-        model: currentModel,
-        status: 'completed',
-        stepCount: recordedSteps.length,
-        resultSummary: summary,
-        createdAt: startTime,
-        completedAt: Date.now(),
-      });
+      if (execution.isPaused()) {
+        setIsPaused(true);
+      } else {
+        await saveTask({
+          id: `task_${Date.now()}`,
+          goal,
+          provider: activeDef.name,
+          model: currentModel,
+          status: 'completed',
+          stepCount: execution.getSteps().length,
+          resultSummary: summary,
+          steps: execution.getSteps(),
+          messages: execution.getMessages(),
+          createdAt: startTime,
+          completedAt: Date.now(),
+        });
+      }
     } catch (err: any) {
       console.error('[BrowserAgent] Execution error:', err);
       setFinalResult(`Task terminated with error: ${err.message}`);
@@ -121,16 +127,68 @@ export const App: React.FC = () => {
         provider: activeDef.name,
         model: currentModel,
         status: 'failed',
-        stepCount: recordedSteps.length,
+        stepCount: execution.getSteps().length,
         resultSummary: err.message,
+        steps: execution.getSteps(),
+        messages: execution.getMessages(),
         createdAt: startTime,
         completedAt: Date.now(),
       });
     } finally {
       setIsRunning(false);
       setPendingQuestion(null);
-      activeExecutionRef.current = null;
-      userPromptResolverRef.current = null;
+    }
+  };
+
+  const handlePauseTask = () => {
+    if (activeExecutionRef.current) {
+      activeExecutionRef.current.pause();
+      setIsPaused(true);
+      setLiveStatus('Task paused. Enter follow-up instructions to resume.');
+    }
+  };
+
+  const handleResumeTask = async (followUpText: string) => {
+    if (!activeExecutionRef.current) {
+      handleStartTask(followUpText);
+      return;
+    }
+
+    setIsRunning(true);
+    setIsPaused(false);
+    setLiveStatus('Resuming task with your follow-up instruction...');
+
+    try {
+      const summary = await activeExecutionRef.current.run(followUpText);
+      setFinalResult(summary);
+
+      if (activeExecutionRef.current.isPaused()) {
+        setIsPaused(true);
+      } else {
+        await saveTask({
+          id: `task_${Date.now()}`,
+          goal: followUpText,
+          provider: activeDef.name,
+          model: currentModel,
+          status: 'completed',
+          stepCount: activeExecutionRef.current.getSteps().length,
+          resultSummary: summary,
+          steps: activeExecutionRef.current.getSteps(),
+          messages: activeExecutionRef.current.getMessages(),
+          createdAt: Date.now(),
+          completedAt: Date.now(),
+        });
+      }
+    } catch (err: any) {
+      setLiveStatus(`Error: ${err.message}`);
+    } finally {
+      setIsRunning(false);
+    }
+  };
+
+  const handleSendSteering = (guidance: string) => {
+    if (activeExecutionRef.current) {
+      activeExecutionRef.current.addSteeringMessage(guidance);
     }
   };
 
@@ -142,18 +200,44 @@ export const App: React.FC = () => {
     setPendingQuestion(null);
   };
 
-  const handleStopTask = () => {
-    if (userPromptResolverRef.current) {
-      userPromptResolverRef.current('Aborted by user.');
-      userPromptResolverRef.current = null;
-    }
+  const handleResumeHistoryTask = (task: TaskRecord) => {
+    setSteps(task.steps || []);
+    setFinalResult(task.resultSummary || null);
+    setCurrentStep((task.steps?.length || 0) + 1);
+    setIsPaused(true);
+    setIsRunning(false);
     setPendingQuestion(null);
+    setLiveStatus(`Loaded past task: "${task.goal.slice(0, 35)}...". Enter a follow-up to continue.`);
 
-    if (activeExecutionRef.current) {
-      activeExecutionRef.current.abort();
-      setLiveStatus('Aborted by user.');
-      setIsRunning(false);
-    }
+    const execution = new AgentExecution(
+      settings,
+      task.goal,
+      {
+        onStepStart: (num) => setCurrentStep(num),
+        onStepComplete: (step) => setSteps((prev) => [...prev, step]),
+        onCostUpdate: (cost, tokens) => {
+          setLiveCostUSD(cost);
+          setLiveTokens(tokens);
+        },
+        onLog: (msg) => setLiveStatus(msg),
+        onFinish: (summary) => {
+          setFinalResult(summary);
+          setLiveStatus('Task completed.');
+        },
+        onError: (err) => setLiveStatus(`Error: ${err.message}`),
+        onAskUser: (question: string) => {
+          setPendingQuestion(question);
+          return new Promise<string>((resolve) => {
+            userPromptResolverRef.current = resolve;
+          });
+        },
+      },
+      task.messages,
+      task.steps
+    );
+    activeExecutionRef.current = execution;
+
+    setCurrentTab('chat');
   };
 
   const handleRerun = (goal: string) => {
@@ -174,8 +258,11 @@ export const App: React.FC = () => {
         {currentTab === 'chat' && (
           <ChatView
             isRunning={isRunning}
+            isPaused={isPaused}
             onStartTask={handleStartTask}
-            onStopTask={handleStopTask}
+            onPauseTask={handlePauseTask}
+            onResumeTask={handleResumeTask}
+            onSendSteering={handleSendSteering}
             currentStep={currentStep}
             maxBudgetUSD={settings.agent.maxBudgetUSD}
             liveCostUSD={liveCostUSD}
@@ -200,7 +287,10 @@ export const App: React.FC = () => {
         )}
 
         {currentTab === 'history' && (
-          <HistoryView onRerunTask={handleRerun} />
+          <HistoryView
+            onRerunTask={handleRerun}
+            onResumeTaskInChat={handleResumeHistoryTask}
+          />
         )}
       </main>
     </div>

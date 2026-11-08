@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { History, Trash2, CheckCircle, XCircle, Clock, ExternalLink } from 'lucide-react';
+import { History, Trash2, CheckCircle, XCircle, Clock, ArrowRight, MessageSquare, Play } from 'lucide-react';
 import { loadTasks, clearTasks, TaskRecord } from '../../core/storage/db';
 
 interface HistoryViewProps {
   onRerunTask: (goal: string) => void;
+  onResumeTaskInChat: (task: TaskRecord) => void;
 }
 
-export const HistoryView: React.FC<HistoryViewProps> = ({ onRerunTask }) => {
+export const HistoryView: React.FC<HistoryViewProps> = ({ onRerunTask, onResumeTaskInChat }) => {
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
   const [selectedTask, setSelectedTask] = useState<TaskRecord | null>(null);
 
@@ -56,7 +57,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onRerunTask }) => {
           {tasks.map((task) => (
             <div
               key={task.id}
-              className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 hover:border-slate-700 transition-colors cursor-pointer"
+              className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 hover:border-slate-700 transition-colors cursor-pointer group"
               onClick={() => setSelectedTask(task)}
             >
               <div className="flex items-start justify-between gap-2 mb-1">
@@ -70,7 +71,13 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onRerunTask }) => {
 
               <div className="flex items-center justify-between text-[10px] text-slate-400 mt-2">
                 <span>{task.provider} • {task.model.split('/').pop()}</span>
-                <span>{task.stepCount} steps • {formatDate(task.createdAt)}</span>
+                <div className="flex items-center gap-2">
+                  <span>{task.stepCount} steps • {formatDate(task.createdAt)}</span>
+                  <span className="text-sky-400 opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity font-medium">
+                    <span>Open</span>
+                    <ArrowRight className="h-2.5 w-2.5" />
+                  </span>
+                </div>
               </div>
             </div>
           ))}
@@ -106,13 +113,25 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onRerunTask }) => {
             <div className="pt-2 flex gap-2">
               <button
                 onClick={() => {
+                  onResumeTaskInChat(selectedTask);
+                  setSelectedTask(null);
+                }}
+                className="flex-1 py-1.5 px-3 bg-sky-500 hover:bg-sky-400 text-white rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 shadow-md shadow-sky-500/20"
+              >
+                <MessageSquare className="h-3.5 w-3.5" />
+                <span>Resume / Open in Chat</span>
+              </button>
+
+              <button
+                onClick={() => {
                   onRerunTask(selectedTask.goal);
                   setSelectedTask(null);
                 }}
-                className="flex-1 py-1.5 px-3 bg-sky-500 hover:bg-sky-400 text-white rounded-lg text-xs font-medium"
+                className="py-1.5 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs"
               >
-                Rerun Task
+                Rerun
               </button>
+
               <button
                 onClick={() => setSelectedTask(null)}
                 className="py-1.5 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs"

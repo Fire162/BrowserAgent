@@ -6,9 +6,11 @@ export interface TaskRecord {
   goal: string;
   provider: string;
   model: string;
-  status: 'completed' | 'failed' | 'aborted';
+  status: 'completed' | 'failed' | 'aborted' | 'paused';
   stepCount: number;
   resultSummary?: string;
+  steps?: any[];
+  messages?: any[];
   createdAt: number;
   completedAt?: number;
 }
@@ -97,7 +99,7 @@ export async function loadTasks(): Promise<TaskRecord[]> {
 
 export async function saveTask(task: TaskRecord): Promise<void> {
   const current = await loadTasks();
-  const updated = [task, ...current.filter((t) => t.id !== task.id)].slice(0, 50); // Keep last 50 tasks
+  const updated = [task, ...current.filter((t) => t.id !== task.id)].slice(0, 50);
 
   if (!isExtensionEnv) {
     localStorage.setItem(TASKS_KEY, JSON.stringify(updated));

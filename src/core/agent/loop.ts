@@ -11,6 +11,7 @@ export interface StepRecord {
   timestamp: number;
   status: 'running' | 'success' | 'failed';
   costUSD?: number;
+  screenshotUrl?: string;
 }
 
 export interface AgentRunCallbacks {
@@ -25,16 +26,79 @@ export interface AgentRunCallbacks {
 
 export class AgentExecution {
   private aborted = false;
+  private paused = false;
+  private completed = false;
+  private steeringQueue: string[] = [];
+  private messages: ChatMessage[] = [];
+  private stepCounter = 1;
+  private accumulatedCostUSD = 0;
+  private accumulatedTokens = 0;
+  private recordedSteps: StepRecord[] = [];
 
   constructor(
     private settings: AllSettings,
     private goal: string,
-    private callbacks: AgentRunCallbacks = {}
-  ) {}
+    private callbacks: AgentRunCallbacks = {},
+    initialMessages?: ChatMessage[],
+    initialSteps?: StepRecord[]
+  ) {
+    if (initialMessages && initialMessages.length > 0) {
+      this.messages = [...initialMessages];
+    } else {
+      this.messages = [
+        {
+          role: 'system',
+          content: this.settings.agent.systemPromptOverride || SYSTEM_PROMPT,
+        },
+        {
+          role: 'user',
+          content: `TASK GOAL: ${this.goal}`,
+        },
+      ];
+    }
+
+    if (initialSteps && initialSteps.length > 0) {
+      this.recordedSteps = [...initialSteps];
+      this.stepCounter = initialSteps.length + 1;
+    }
+  }
 
   public abort(): void {
     this.aborted = true;
-    this.callbacks.onLog?.('Stopping execution...');
+    this.paused = false;
+    this.callbacks.onLog?.('Task stopped by user.');
+  }
+
+  public pause(): void {
+    this.paused = true;
+    this.callbacks.onLog?.('Task paused. Awaiting follow-up instruction...');
+  }
+
+  public addSteeringMessage(msg: string): void {
+    if (msg.trim()) {
+      this.steeringQueue.push(msg.trim());
+      this.callbacks.onLog?.(`Steering queued: "${msg.trim().slice(0, 30)}..."`);
+    }
+  }
+
+  public isPaused(): boolean {
+    return this.paused;
+  }
+
+  public isAborted(): boolean {
+    return this.aborted;
+  }
+
+  public getMessages(): ChatMessage[] {
+    return [...this.messages];
+  }
+
+  public getSteps(): StepRecord[] {
+    return [...this.recordedSteps];
+  }
+
+  public getCost(): number {
+    return this.accumulatedCostUSD;
   }
 
   private async getActiveTabId(): Promise<number> {
@@ -110,67 +174,65 @@ export class AgentExecution {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  public async run(): Promise<string> {
+  public async run(followUpInstruction?: string): Promise<string> {
+    this.aborted = false;
+    this.paused = false;
+
     let tabId = await this.getActiveTabId();
     await this.ensureContentScript(tabId);
 
     let maxBudgetUSD = this.settings.agent.maxBudgetUSD ?? 0.25;
     const showVisualLabels = this.settings.agent.showVisualLabels ?? true;
 
-    let accumulatedCostUSD = 0;
-    let accumulatedTokens = 0;
-
-    const messages: ChatMessage[] = [
-      {
-        role: 'system',
-        content: this.settings.agent.systemPromptOverride || SYSTEM_PROMPT,
-      },
-      {
+    if (followUpInstruction && followUpInstruction.trim()) {
+      this.messages.push({
         role: 'user',
-        content: `TASK GOAL: ${this.goal}`,
-      },
-    ];
-
-    let stepCounter = 1;
+        content: `[USER FOLLOW-UP INSTRUCTION]:\n${followUpInstruction.trim()}`,
+      });
+      this.callbacks.onLog?.('Resuming with your follow-up instruction...');
+    }
 
     try {
-      // Run continuously until task completion, user abort, or budget ceiling
       while (true) {
         if (this.aborted) {
           await this.clearBadges(tabId);
-          return 'Execution aborted by user.';
+          return 'Execution stopped by user.';
+        }
+
+        if (this.paused) {
+          await this.clearBadges(tabId);
+          return 'Execution paused. Enter follow-up instructions to resume.';
         }
 
         // Budget check: If budget cap is set and exceeded, pause and ask user
-        if (maxBudgetUSD > 0 && accumulatedCostUSD >= maxBudgetUSD) {
+        if (maxBudgetUSD > 0 && this.accumulatedCostUSD >= maxBudgetUSD) {
           this.callbacks.onLog?.(`Budget limit reached ($${maxBudgetUSD.toFixed(2)}). Asking for approval...`);
           
-          let budgetPrompt = `Budget cap of $${maxBudgetUSD.toFixed(2)} reached (Current spend: $${accumulatedCostUSD.toFixed(4)}). Would you like to add more budget and proceed, or conclude the task?`;
+          const budgetPrompt = `Budget cap of $${maxBudgetUSD.toFixed(2)} reached (Current spend: $${this.accumulatedCostUSD.toFixed(4)}). Would you like to add more budget and proceed, or conclude the task?`;
           let userResponse = 'continue';
 
           if (this.callbacks.onAskUser) {
             userResponse = await this.callbacks.onAskUser(budgetPrompt);
           }
 
-          if (this.aborted) {
+          if (this.aborted || this.paused) {
             await this.clearBadges(tabId);
-            return 'Execution aborted by user.';
+            return 'Execution stopped by user.';
           }
 
           const lower = userResponse.toLowerCase();
           if (lower.includes('stop') || lower.includes('cancel') || lower.includes('finish') || lower.includes('conclude')) {
             await this.clearBadges(tabId);
-            const budgetStopMsg = `Task halted at budget limit of $${maxBudgetUSD.toFixed(2)} (Spent: $${accumulatedCostUSD.toFixed(4)}).`;
+            const budgetStopMsg = `Task concluded at budget limit of $${maxBudgetUSD.toFixed(2)} (Spent: $${this.accumulatedCostUSD.toFixed(4)}).`;
             this.callbacks.onFinish?.(budgetStopMsg);
             return budgetStopMsg;
           }
 
-          // User approved continuing: bump budget ceiling by $0.25
           maxBudgetUSD += 0.25;
           this.callbacks.onLog?.(`Budget extended to $${maxBudgetUSD.toFixed(2)}. Resuming...`);
         }
 
-        this.callbacks.onStepStart?.(stepCounter);
+        this.callbacks.onStepStart?.(this.stepCounter);
 
         // Make sure active tab is still accessible
         tabId = await this.getActiveTabId();
@@ -190,7 +252,7 @@ export class AgentExecution {
           ? snapshot.snapshotText.slice(0, 8000)
           : 'No visible interactive elements detected.';
 
-        const observationContent = `[CURRENT PAGE OBSERVATION]
+        let observationContent = `[CURRENT PAGE OBSERVATION]
 URL: ${snapshot.url}
 Title: ${snapshot.title}
 Interactive Elements:
@@ -198,7 +260,14 @@ ${elementsList}
 
 What is your next action?`;
 
-        messages.push({
+        // Check if user submitted mid-flight steering message
+        if (this.steeringQueue.length > 0) {
+          const guidance = this.steeringQueue.splice(0, this.steeringQueue.length).join('\n');
+          observationContent += `\n\n[USER REAL-TIME GUIDANCE / STEERING MESSAGE]:\n"${guidance}"\nCRITICAL: You must incorporate this user instruction immediately for your next action.`;
+          this.callbacks.onLog?.(`Applied user guidance: "${guidance.slice(0, 30)}..."`);
+        }
+
+        this.messages.push({
           role: 'user',
           content: observationContent,
         });
@@ -208,47 +277,48 @@ What is your next action?`;
         
         const response = await executeLLMCall(
           this.settings,
-          messages,
+          this.messages,
           AGENT_TOOLS,
           (retryNotice) => this.callbacks.onLog?.(retryNotice)
         );
 
         // Track spending and tokens
         if (response.estimatedCostUSD) {
-          accumulatedCostUSD += response.estimatedCostUSD;
+          this.accumulatedCostUSD += response.estimatedCostUSD;
         }
         if (response.usage?.totalTokens) {
-          accumulatedTokens += response.usage.totalTokens;
+          this.accumulatedTokens += response.usage.totalTokens;
         }
-        this.callbacks.onCostUpdate?.(accumulatedCostUSD, accumulatedTokens);
+        this.callbacks.onCostUpdate?.(this.accumulatedCostUSD, this.accumulatedTokens);
 
         const thought = response.text?.trim() || '';
         const toolCalls = response.toolCalls || [];
 
         if (toolCalls.length === 0) {
           const stepRecord: StepRecord = {
-            stepNumber: stepCounter,
+            stepNumber: this.stepCounter,
             thought,
             timestamp: Date.now(),
             status: 'success',
             resultMessage: 'Agent reflected without dispatching a tool.',
             costUSD: response.estimatedCostUSD,
           };
+          this.recordedSteps.push(stepRecord);
           this.callbacks.onStepComplete?.(stepRecord);
 
-          messages.push({
+          this.messages.push({
             role: 'assistant',
             content: thought,
           });
 
-          stepCounter++;
+          this.stepCounter++;
           continue;
         }
 
         // Execute primary tool call
         const primaryTool = toolCalls[0];
         const stepRecord: StepRecord = {
-          stepNumber: stepCounter,
+          stepNumber: this.stepCounter,
           thought,
           toolCall: primaryTool,
           timestamp: Date.now(),
@@ -263,13 +333,31 @@ What is your next action?`;
           const summary = primaryTool.arguments.summary || thought || 'Task marked complete.';
           stepRecord.status = 'success';
           stepRecord.resultMessage = 'Task finished.';
+          this.recordedSteps.push(stepRecord);
           this.callbacks.onStepComplete?.(stepRecord);
           await this.clearBadges(tabId);
+          this.completed = true;
           this.callbacks.onFinish?.(summary);
           return summary;
         }
 
-        if (primaryTool.name === 'ask_user') {
+        if (primaryTool.name === 'take_screenshot') {
+          this.callbacks.onLog?.('Capturing visible tab screenshot...');
+          const shotRes = await new Promise<any>((resolve) => {
+            chrome.runtime.sendMessage({ action: 'capture_screenshot' }, (res) => {
+              resolve(res || {});
+            });
+          });
+
+          if (shotRes?.success && shotRes?.dataUrl) {
+            stepRecord.screenshotUrl = shotRes.dataUrl;
+            toolResultStr = 'Screenshot captured successfully and attached to report.';
+            stepRecord.status = 'success';
+          } else {
+            toolResultStr = `Screenshot capture failed: ${shotRes?.error || 'Unknown error'}`;
+            stepRecord.status = 'failed';
+          }
+        } else if (primaryTool.name === 'ask_user') {
           const question = primaryTool.arguments.question || 'Clarification needed from user.';
           stepRecord.status = 'running';
           stepRecord.resultMessage = `Waiting for user: "${question}"`;
@@ -281,9 +369,9 @@ What is your next action?`;
             userReply = await this.callbacks.onAskUser(question);
           }
 
-          if (this.aborted) {
+          if (this.aborted || this.paused) {
             await this.clearBadges(tabId);
-            return 'Execution aborted by user.';
+            return 'Execution paused by user.';
           }
 
           stepRecord.status = 'success';
@@ -307,7 +395,6 @@ What is your next action?`;
           });
           toolResultStr = `Navigated to ${url}.`;
         } else {
-          // DOM actions: click, type, press_key, scroll, extract_data
           const domRes = await this.executeDOMAction(tabId, primaryTool.name, primaryTool.arguments);
           toolResultStr = domRes.message || JSON.stringify(domRes);
           if (!domRes.success) {
@@ -318,24 +405,24 @@ What is your next action?`;
         }
 
         stepRecord.resultMessage = toolResultStr;
+        this.recordedSteps.push(stepRecord);
         this.callbacks.onStepComplete?.(stepRecord);
 
         // Append assistant tool call and tool result to conversation
-        messages.push({
+        this.messages.push({
           role: 'assistant',
           content: thought,
           toolCalls: [primaryTool],
         });
 
-        messages.push({
+        this.messages.push({
           role: 'tool',
-          toolCallId: primaryTool.id || `call_${stepCounter}`,
+          toolCallId: primaryTool.id || `call_${this.stepCounter}`,
           content: toolResultStr,
         });
 
-        // Small delay between steps
         await this.sleep(800);
-        stepCounter++;
+        this.stepCounter++;
       }
     } catch (err: any) {
       await this.clearBadges(tabId);

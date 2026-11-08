@@ -1,12 +1,15 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Square, Play, Sparkles, Copy, Check, Terminal, Compass, HelpCircle, ArrowRight } from 'lucide-react';
+import { Send, Pause, Play, Sparkles, Copy, Check, Terminal, Compass, HelpCircle, ArrowRight, Navigation } from 'lucide-react';
 import { StepRecord } from '../../core/agent/loop';
 import { StepTimeline } from './StepTimeline';
 
 interface ChatViewProps {
   isRunning: boolean;
+  isPaused: boolean;
   onStartTask: (goal: string) => void;
-  onStopTask: () => void;
+  onPauseTask: () => void;
+  onResumeTask: (followUp: string) => void;
+  onSendSteering: (guidance: string) => void;
   currentStep: number;
   maxBudgetUSD: number;
   liveCostUSD: number;
@@ -29,8 +32,11 @@ const QUICK_PROMPTS = [
 
 export const ChatView: React.FC<ChatViewProps> = ({
   isRunning,
+  isPaused,
   onStartTask,
-  onStopTask,
+  onPauseTask,
+  onResumeTask,
+  onSendSteering,
   currentStep,
   maxBudgetUSD,
   liveCostUSD,
@@ -43,8 +49,9 @@ export const ChatView: React.FC<ChatViewProps> = ({
   pendingQuestion,
   onAnswerQuestion,
 }) => {
-  const [goal, setGoal] = useState('');
+  const [inputText, setInputText] = useState('');
   const [answerInput, setAnswerInput] = useState('');
+  const [steeringToast, setSteeringToast] = useState(false);
   const [copied, setCopied] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -52,12 +59,32 @@ export const ChatView: React.FC<ChatViewProps> = ({
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [steps, liveStatus, finalResult, pendingQuestion]);
+  }, [steps, liveStatus, finalResult, pendingQuestion, isPaused]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!goal.trim() || isRunning) return;
-    onStartTask(goal.trim());
+    const trimmed = inputText.trim();
+    if (!trimmed) return;
+
+    if (isRunning && !isPaused) {
+      // Send mid-flight steering guidance
+      onSendSteering(trimmed);
+      setInputText('');
+      setSteeringToast(true);
+      setTimeout(() => setSteeringToast(false), 2500);
+      return;
+    }
+
+    if (isPaused) {
+      // Resume paused task with follow-up instruction
+      onResumeTask(trimmed);
+      setInputText('');
+      return;
+    }
+
+    // Start brand new task
+    onStartTask(trimmed);
+    setInputText('');
   };
 
   const handleSendAnswer = (text: string) => {
@@ -105,7 +132,9 @@ export const ChatView: React.FC<ChatViewProps> = ({
                   <button
                     key={i}
                     type="button"
-                    onClick={() => setGoal(prompt)}
+                    onClick={() => {
+                      setInputText(prompt);
+                    }}
                     className="w-full text-left text-xs bg-slate-900/60 hover:bg-slate-800/80 border border-slate-800 hover:border-slate-700 p-2.5 rounded-lg text-slate-300 hover:text-white transition-all leading-snug"
                   >
                     {prompt}
@@ -123,7 +152,11 @@ export const ChatView: React.FC<ChatViewProps> = ({
               <div className="flex items-center gap-2">
                 <div className="h-2 w-2 rounded-full bg-sky-400 animate-ping" />
                 <span className="font-semibold text-sky-300">
-                  {pendingQuestion ? 'Paused: Waiting for your input' : 'Executing Task...'}
+                  {pendingQuestion
+                    ? 'Paused: Waiting for your input'
+                    : isPaused
+                    ? 'Paused: Awaiting follow-up'
+                    : 'Executing Task...'}
                 </span>
               </div>
               <div className="flex items-center gap-2 font-mono text-[11px]">
@@ -216,7 +249,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
             <div className="flex items-center justify-between border-b border-slate-800 pb-2">
               <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-400">
                 <Check className="h-4 w-4" />
-                <span>Task Completed</span>
+                <span>Task Summary</span>
               </div>
               <button
                 onClick={handleCopyResult}
@@ -233,15 +266,28 @@ export const ChatView: React.FC<ChatViewProps> = ({
         )}
       </div>
 
+      {/* Steering Confirmation Toast */}
+      {steeringToast && (
+        <div className="mx-3.5 mb-1 py-1 px-2.5 bg-sky-500/20 border border-sky-500/40 text-sky-300 text-[11px] rounded-lg flex items-center gap-1.5 animate-fade-in">
+          <Navigation className="h-3 w-3" />
+          <span>Steering instruction queued for next step!</span>
+        </div>
+      )}
+
       {/* Input Box & Action Bar */}
       <div className="p-3 border-t border-slate-800/80 bg-slate-900/90 backdrop-blur-md">
         <form onSubmit={handleSubmit} className="space-y-2">
           <div className="relative">
             <textarea
-              value={goal}
-              onChange={(e) => setGoal(e.target.value)}
-              placeholder="Give a task on this tab (e.g. Find flights to NYC, extract data, click button)..."
-              disabled={isRunning}
+              value={inputText}
+              onChange={(e) => setInputText(e.target.value)}
+              placeholder={
+                isRunning && !isPaused
+                  ? "Steer agent mid-flight (e.g. 'click the blue button instead', 'scroll down')..."
+                  : isPaused
+                  ? "Task paused. Enter follow-up instructions to resume..."
+                  : "Give a task on this tab (e.g. Find flights to NYC, extract data, click button)..."
+              }
               rows={2}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
@@ -249,34 +295,66 @@ export const ChatView: React.FC<ChatViewProps> = ({
                   handleSubmit(e);
                 }
               }}
-              className="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 resize-none disabled:opacity-50"
+              className="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 resize-none"
             />
           </div>
 
           <div className="flex items-center justify-between">
             <span className="text-[10px] text-slate-500">
-              Press <kbd className="bg-slate-800 px-1 rounded text-slate-400">Enter</kbd> to run
+              {isRunning && !isPaused ? (
+                <span className="text-sky-400 flex items-center gap-1">
+                  <Navigation className="h-3 w-3" />
+                  <span>Send mid-flight steering advice</span>
+                </span>
+              ) : isPaused ? (
+                <span className="text-amber-400">Task paused • Enter follow-up to resume</span>
+              ) : (
+                <span>Press <kbd className="bg-slate-800 px-1 rounded text-slate-400">Enter</kbd> to run</span>
+              )}
             </span>
 
-            {isRunning ? (
-              <button
-                type="button"
-                onClick={onStopTask}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-semibold shadow-md shadow-rose-600/20 transition-all"
-              >
-                <Square className="h-3.5 w-3.5 fill-current" />
-                <span>Stop</span>
-              </button>
-            ) : (
-              <button
-                type="submit"
-                disabled={!goal.trim()}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 bg-sky-500 hover:bg-sky-400 disabled:opacity-40 disabled:hover:bg-sky-500 text-white rounded-lg text-xs font-semibold shadow-md shadow-sky-500/20 transition-all"
-              >
-                <Play className="h-3.5 w-3.5 fill-current" />
-                <span>Start Task</span>
-              </button>
-            )}
+            <div className="flex items-center gap-2">
+              {isRunning && !isPaused && (
+                <button
+                  type="button"
+                  onClick={onPauseTask}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600/80 hover:bg-amber-600 text-white rounded-lg text-xs font-semibold shadow-sm transition-all"
+                  title="Pause execution without losing state"
+                >
+                  <Pause className="h-3.5 w-3.5 fill-current" />
+                  <span>Pause</span>
+                </button>
+              )}
+
+              {isRunning && !isPaused ? (
+                <button
+                  type="submit"
+                  disabled={!inputText.trim()}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-40 text-white rounded-lg text-xs font-semibold shadow-sm transition-all"
+                >
+                  <Navigation className="h-3.5 w-3.5" />
+                  <span>Steer</span>
+                </button>
+              ) : isPaused ? (
+                <button
+                  type="submit"
+                  disabled={!inputText.trim()}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white rounded-lg text-xs font-semibold shadow-sm transition-all"
+                >
+                  <Play className="h-3.5 w-3.5 fill-current" />
+                  <span>Resume Task</span>
+                </button>
+              ) : (
+                <button
+                  type="submit"
+                  disabled={!inputText.trim()}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 bg-sky-500 hover:bg-sky-400 disabled:opacity-40 disabled:hover:bg-sky-500 text-white rounded-lg text-xs font-semibold shadow-md shadow-sky-500/20 transition-all"
+                >
+                  <Play className="h-3.5 w-3.5 fill-current" />
+                  <span>Start Task</span>
+                </button>
+              )}
+            </div>
           </div>
         </form>
       </div>
