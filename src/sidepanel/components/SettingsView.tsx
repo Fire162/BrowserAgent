@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import { Eye, EyeOff, Key, ExternalLink, RefreshCw, Cpu, Check, AlertCircle, Sparkles } from 'lucide-react';
+import { Eye, EyeOff, Key, ExternalLink, RefreshCw, Cpu, Check, AlertCircle, Sparkles, Globe } from 'lucide-react';
 import { AllSettings, ProviderId, ModelOption } from '../../core/llm/types';
 import { PROVIDERS } from '../../core/llm/providers/registry';
-import { fetchOpenRouterModels } from '../../core/llm/providers/openrouter';
+import { fetchLiveProviderModels } from '../../core/llm/models-fetcher';
 
 interface SettingsViewProps {
   settings: AllSettings;
@@ -19,29 +19,40 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 }) => {
   const [showKey, setShowKey] = useState(false);
   const [fetchingModels, setFetchingModels] = useState(false);
-  const [openRouterModels, setOpenRouterModels] = useState<ModelOption[]>([]);
+  const [liveModelsMap, setLiveModelsMap] = useState<Partial<Record<ProviderId, ModelOption[]>>>({});
   const [modelFilter, setModelFilter] = useState('');
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [fetchMessage, setFetchMessage] = useState<string | null>(null);
 
   const activeProviderId = settings.activeProvider;
   const activeDef = PROVIDERS[activeProviderId];
   const activeConfig = settings.providers[activeProviderId];
 
-  const handleFetchOpenRouter = async () => {
-    if (!activeConfig.apiKey) {
-      alert('Please enter your OpenRouter API key first.');
+  const handleFetchLiveModels = async () => {
+    if (activeDef.requiresApiKey && !activeConfig.apiKey?.trim()) {
+      alert(`Please enter your ${activeDef.name} API key first.`);
       return;
     }
+
     setFetchingModels(true);
+    setFetchMessage(null);
+
     try {
-      const models = await fetchOpenRouterModels(activeConfig.apiKey);
+      const models = await fetchLiveProviderModels(
+        activeProviderId,
+        activeConfig.apiKey,
+        activeConfig.baseUrl
+      );
+
       if (models.length > 0) {
-        setOpenRouterModels(models);
+        setLiveModelsMap((prev) => ({ ...prev, [activeProviderId]: models }));
+        setFetchMessage(`Loaded ${models.length} live models from ${activeDef.name} endpoint!`);
+        setTimeout(() => setFetchMessage(null), 3000);
       } else {
-        alert('Could not fetch models. Check your API key or network.');
+        alert('Endpoint returned 0 models. Check your API key or network.');
       }
     } catch (err: any) {
-      alert(`Error fetching models: ${err.message}`);
+      alert(`Error fetching models from ${activeDef.name}: ${err.message}`);
     } finally {
       setFetchingModels(false);
     }
@@ -72,14 +83,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setTimeout(() => setSaveSuccess(false), 1500);
   };
 
-  const displayedModels =
-    activeProviderId === 'openrouter' && openRouterModels.length > 0
-      ? openRouterModels.filter(
-          (m) =>
-            m.name.toLowerCase().includes(modelFilter.toLowerCase()) ||
-            m.id.toLowerCase().includes(modelFilter.toLowerCase())
-        )
-      : activeDef.models;
+  const availableModels = liveModelsMap[activeProviderId] || activeDef.models;
+
+  const displayedModels = availableModels.filter(
+    (m) =>
+      m.name.toLowerCase().includes(modelFilter.toLowerCase()) ||
+      m.id.toLowerCase().includes(modelFilter.toLowerCase())
+  );
 
   return (
     <div className="flex-1 overflow-y-auto p-4 space-y-6 text-sm text-slate-200">
@@ -105,7 +115,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             return (
               <button
                 key={pid}
-                onClick={() => onSetActiveProvider(pid)}
+                onClick={() => {
+                  onSetActiveProvider(pid);
+                  setModelFilter('');
+                }}
                 className={`p-2.5 rounded-lg border text-left flex flex-col justify-between transition-all ${
                   isSelected
                     ? 'border-sky-500 bg-sky-500/10 shadow-sm'
@@ -138,7 +151,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <span>{activeDef.name}</span>
               {activeProviderId === 'openrouter' && (
                 <span className="text-[10px] bg-purple-500/20 text-purple-300 border border-purple-500/30 px-1 rounded">
-                  Recommended
+                  Aggregator
                 </span>
               )}
             </h3>
@@ -206,82 +219,101 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
         )}
 
-        {/* Model Selection */}
+        {/* Model Selection with LIVE Fetcher */}
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <label className="text-xs font-medium text-slate-300 flex items-center gap-1.5">
               <Sparkles className="h-3.5 w-3.5 text-sky-400" />
               <span>Model Selection</span>
             </label>
-            {activeProviderId === 'openrouter' && (
-              <button
-                type="button"
-                onClick={handleFetchOpenRouter}
-                disabled={fetchingModels}
-                className="text-xs text-sky-400 hover:text-sky-300 flex items-center gap-1 disabled:opacity-50"
-              >
-                <RefreshCw className={`h-3 w-3 ${fetchingModels ? 'animate-spin' : ''}`} />
-                <span>{fetchingModels ? 'Fetching...' : 'Fetch Live Models'}</span>
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={handleFetchLiveModels}
+              disabled={fetchingModels}
+              className="text-xs text-sky-400 hover:text-sky-300 flex items-center gap-1 disabled:opacity-50 font-medium"
+              title="Query the live provider endpoint for active serving models"
+            >
+              <RefreshCw className={`h-3 w-3 ${fetchingModels ? 'animate-spin' : ''}`} />
+              <span>{fetchingModels ? 'Fetching...' : 'Refresh Live Models'}</span>
+            </button>
           </div>
 
-          {/* Model Filter if list is long */}
-          {openRouterModels.length > 0 && (
+          {fetchMessage && (
+            <div className="text-[11px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded">
+              {fetchMessage}
+            </div>
+          )}
+
+          {/* Model Search/Filter */}
+          <div className="relative">
             <input
               type="text"
               value={modelFilter}
               onChange={(e) => setModelFilter(e.target.value)}
-              placeholder="Search OpenRouter models (e.g. claude, deepseek)..."
-              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-sky-500"
+              placeholder={`Filter ${availableModels.length} models (e.g. 2.0, flash, sonnet, r1)...`}
+              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-sky-500"
             />
-          )}
+          </div>
 
           {/* Model Options List */}
-          <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1 border border-slate-800/80 rounded-lg p-1.5 bg-slate-950/40">
-            {displayedModels.map((m) => {
-              const isSelected =
-                !activeConfig.customModelId &&
-                (activeConfig.selectedModel === m.id ||
-                  (!activeConfig.selectedModel && activeDef.defaultModel === m.id));
+          <div className="max-h-52 overflow-y-auto space-y-1.5 pr-1 border border-slate-800/80 rounded-lg p-1.5 bg-slate-950/40">
+            {displayedModels.length === 0 ? (
+              <div className="text-center py-4 text-slate-500 text-xs">
+                No matching models found. Try clearing filter or refreshing.
+              </div>
+            ) : (
+              displayedModels.map((m) => {
+                const isSelected =
+                  !activeConfig.customModelId &&
+                  (activeConfig.selectedModel === m.id ||
+                    (!activeConfig.selectedModel && activeDef.defaultModel === m.id));
 
-              return (
-                <div
-                  key={m.id}
-                  onClick={() => handleModelChange(m.id)}
-                  className={`p-2 rounded-md cursor-pointer transition-all flex items-start justify-between ${
-                    isSelected
-                      ? 'bg-sky-500/15 border border-sky-500/30 text-white'
-                      : 'hover:bg-slate-800/60 text-slate-300 border border-transparent'
-                  }`}
-                >
-                  <div className="min-w-0 pr-2">
-                    <div className="flex items-center gap-1.5">
-                      <span className="font-medium text-xs truncate">{m.name}</span>
-                      {m.recommended && (
-                        <span className="text-[9px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-1 rounded">
-                          Recommended
-                        </span>
+                return (
+                  <div
+                    key={m.id}
+                    onClick={() => handleModelChange(m.id)}
+                    className={`p-2 rounded-md cursor-pointer transition-all flex items-start justify-between ${
+                      isSelected
+                        ? 'bg-sky-500/15 border border-sky-500/30 text-white'
+                        : 'hover:bg-slate-800/60 text-slate-300 border border-transparent'
+                    }`}
+                  >
+                    <div className="min-w-0 pr-2">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-medium text-xs truncate">{m.name}</span>
+                        {m.recommended && (
+                          <span className="text-[9px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-1 rounded">
+                            Recommended
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[10px] text-slate-400 truncate mt-0.5 font-mono">
+                        {m.id}
+                      </div>
+                      {m.description && (
+                        <p className="text-[10px] text-slate-400 line-clamp-1 mt-0.5">{m.description}</p>
                       )}
                     </div>
-                    {m.description && (
-                      <p className="text-[10px] text-slate-400 line-clamp-1 mt-0.5">{m.description}</p>
-                    )}
+                    {isSelected && <Check className="h-3.5 w-3.5 text-sky-400 shrink-0 mt-0.5" />}
                   </div>
-                  {isSelected && <Check className="h-3.5 w-3.5 text-sky-400 shrink-0 mt-0.5" />}
-                </div>
-              );
-            })}
+                );
+              })
+            )}
           </div>
 
           {/* Custom Model ID Override */}
           <div className="space-y-1 pt-1">
-            <span className="text-[11px] text-slate-400">Or enter custom Model ID:</span>
+            <div className="flex items-center justify-between text-[11px] text-slate-400">
+              <span>Or enter exact custom Model ID:</span>
+              {activeConfig.customModelId && (
+                <span className="text-sky-400 font-mono text-[10px]">Active</span>
+              )}
+            </div>
             <input
               type="text"
               value={activeConfig.customModelId || ''}
               onChange={(e) => handleCustomModelChange(e.target.value)}
-              placeholder="e.g. anthropic/claude-3-7-sonnet:thinking, deepseek/deepseek-r1"
+              placeholder="e.g. gemini-2.0-flash, anthropic/claude-3-7-sonnet:thinking, etc."
               className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs font-mono text-white placeholder-slate-600 focus:outline-none focus:border-sky-500"
             />
           </div>
