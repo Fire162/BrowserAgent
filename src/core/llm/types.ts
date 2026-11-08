@@ -1,10 +1,13 @@
 export type ProviderId = 
-  | 'openrouter'
-  | 'gemini'
-  | 'anthropic'
   | 'openai'
-  | 'grok'
+  | 'google'
+  | 'anthropic'
   | 'deepseek'
+  | 'alibaba'
+  | 'xai'
+  | 'zai'
+  | 'mistral'
+  | 'openrouter'
   | 'custom';
 
 export interface ModelOption {

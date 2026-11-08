@@ -26,7 +26,7 @@ export async function executeLLMCall(
     case 'openrouter':
       return callOpenRouter(apiKey, model, messages, tools, temperature);
 
-    case 'gemini':
+    case 'google':
       return callGemini(apiKey, model, messages, tools, temperature);
 
     case 'anthropic':
@@ -43,17 +43,6 @@ export async function executeLLMCall(
         providerName: 'OpenAI',
       });
 
-    case 'grok':
-      return callOpenAICompatible({
-        apiKey,
-        baseUrl: providerConfig.baseUrl || PROVIDERS.grok.defaultBaseUrl!,
-        model,
-        messages,
-        tools,
-        temperature,
-        providerName: 'xAI Grok',
-      });
-
     case 'deepseek':
       return callOpenAICompatible({
         apiKey,
@@ -63,6 +52,50 @@ export async function executeLLMCall(
         tools,
         temperature,
         providerName: 'DeepSeek',
+      });
+
+    case 'alibaba':
+      return callOpenAICompatible({
+        apiKey,
+        baseUrl: providerConfig.baseUrl || PROVIDERS.alibaba.defaultBaseUrl!,
+        model,
+        messages,
+        tools,
+        temperature,
+        providerName: 'Alibaba',
+      });
+
+    case 'xai':
+      return callOpenAICompatible({
+        apiKey,
+        baseUrl: providerConfig.baseUrl || PROVIDERS.xai.defaultBaseUrl!,
+        model,
+        messages,
+        tools,
+        temperature,
+        providerName: 'xAI',
+      });
+
+    case 'zai':
+      return callOpenAICompatible({
+        apiKey,
+        baseUrl: providerConfig.baseUrl || PROVIDERS.zai.defaultBaseUrl!,
+        model,
+        messages,
+        tools,
+        temperature,
+        providerName: 'Z.ai',
+      });
+
+    case 'mistral':
+      return callOpenAICompatible({
+        apiKey,
+        baseUrl: providerConfig.baseUrl || PROVIDERS.mistral.defaultBaseUrl!,
+        model,
+        messages,
+        tools,
+        temperature,
+        providerName: 'Mistral',
       });
 
     case 'custom':
