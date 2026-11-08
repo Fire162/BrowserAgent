@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Square, Play, Sparkles, Copy, Check, Terminal, Compass, Layers } from 'lucide-react';
+import { Send, Square, Play, Sparkles, Copy, Check, Terminal, Compass, HelpCircle, ArrowRight } from 'lucide-react';
 import { StepRecord } from '../../core/agent/loop';
 import { StepTimeline } from './StepTimeline';
 
@@ -14,6 +14,8 @@ interface ChatViewProps {
   finalResult: string | null;
   activeProvider: string;
   activeModel: string;
+  pendingQuestion?: string | null;
+  onAnswerQuestion?: (answer: string) => void;
 }
 
 const QUICK_PROMPTS = [
@@ -34,8 +36,11 @@ export const ChatView: React.FC<ChatViewProps> = ({
   finalResult,
   activeProvider,
   activeModel,
+  pendingQuestion,
+  onAnswerQuestion,
 }) => {
   const [goal, setGoal] = useState('');
+  const [answerInput, setAnswerInput] = useState('');
   const [copied, setCopied] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -43,12 +48,18 @@ export const ChatView: React.FC<ChatViewProps> = ({
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [steps, liveStatus, finalResult]);
+  }, [steps, liveStatus, finalResult, pendingQuestion]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!goal.trim() || isRunning) return;
     onStartTask(goal.trim());
+  };
+
+  const handleSendAnswer = (text: string) => {
+    if (!text.trim() || !onAnswerQuestion) return;
+    onAnswerQuestion(text.trim());
+    setAnswerInput('');
   };
 
   const handleCopyResult = () => {
@@ -63,7 +74,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
     <div className="flex-1 flex flex-col h-[calc(100vh-85px)] overflow-hidden">
       {/* Scrollable Timeline & Results View */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-3.5 space-y-4">
-        {steps.length === 0 && !finalResult && (
+        {steps.length === 0 && !finalResult && !pendingQuestion && (
           <div className="space-y-4 pt-2">
             <div className="text-center py-6 px-4 bg-slate-900/40 border border-slate-800/80 rounded-2xl">
               <div className="h-10 w-10 mx-auto rounded-xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center mb-3">
@@ -107,7 +118,9 @@ export const ChatView: React.FC<ChatViewProps> = ({
             <div className="flex items-center justify-between text-xs">
               <div className="flex items-center gap-2">
                 <div className="h-2 w-2 rounded-full bg-sky-400 animate-ping" />
-                <span className="font-semibold text-sky-300">Executing Task...</span>
+                <span className="font-semibold text-sky-300">
+                  {pendingQuestion ? 'Paused: Waiting for your input' : 'Executing Task...'}
+                </span>
               </div>
               <span className="font-mono text-[11px] text-sky-400 font-bold">
                 Step {currentStep} / {maxSteps}
@@ -120,6 +133,64 @@ export const ChatView: React.FC<ChatViewProps> = ({
                 <span className="truncate">{liveStatus}</span>
               </div>
             )}
+          </div>
+        )}
+
+        {/* Interactive ask_user Question Card */}
+        {pendingQuestion && (
+          <div className="bg-gradient-to-br from-amber-950/40 to-slate-900 border border-amber-500/50 rounded-xl p-3.5 space-y-3 shadow-lg shadow-amber-500/10 animate-fade-in">
+            <div className="flex items-start gap-2.5">
+              <div className="h-7 w-7 rounded-lg bg-amber-500/20 border border-amber-500/30 flex items-center justify-center shrink-0 mt-0.5">
+                <HelpCircle className="h-4 w-4 text-amber-400" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-bold text-amber-300">Agent Question / Action Needed</span>
+                  <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-ping" />
+                </div>
+                <p className="text-xs text-slate-200 mt-1 leading-relaxed font-medium">
+                  {pendingQuestion}
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-2 pt-1 border-t border-slate-800/80">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={answerInput}
+                  onChange={(e) => setAnswerInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleSendAnswer(answerInput);
+                    }
+                  }}
+                  placeholder="Type your response or clarification here..."
+                  className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-400"
+                />
+                <button
+                  type="button"
+                  onClick={() => handleSendAnswer(answerInput)}
+                  disabled={!answerInput.trim()}
+                  className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-black font-semibold rounded-lg text-xs flex items-center gap-1 transition-colors"
+                >
+                  <span>Reply</span>
+                  <ArrowRight className="h-3 w-3" />
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between text-[11px] pt-1">
+                <span className="text-slate-400">If you completed a manual action (e.g. CAPTCHA / Login):</span>
+                <button
+                  type="button"
+                  onClick={() => handleSendAnswer('I have completed the manual action on the page. Please continue.')}
+                  className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-sky-300 rounded border border-slate-700 text-[10px] font-medium transition-colors"
+                >
+                  Done, Continue →
+                </button>
+              </div>
+            </div>
           </div>
         )}
 

@@ -18,6 +18,7 @@ export interface AgentRunCallbacks {
   onLog?: (message: string) => void;
   onFinish?: (summary: string) => void;
   onError?: (error: Error) => void;
+  onAskUser?: (question: string) => Promise<string>;
 }
 
 export class AgentExecution {
@@ -175,7 +176,6 @@ What is your next action?`;
         const toolCalls = response.toolCalls || [];
 
         if (toolCalls.length === 0) {
-          // LLM returned text without a tool call
           const stepRecord: StepRecord = {
             stepNumber: stepCounter,
             thought,
@@ -185,7 +185,6 @@ What is your next action?`;
           };
           this.callbacks.onStepComplete?.(stepRecord);
 
-          // Append assistant message
           messages.push({
             role: 'assistant',
             content: thought,
@@ -219,15 +218,29 @@ What is your next action?`;
         }
 
         if (primaryTool.name === 'ask_user') {
-          const question = primaryTool.arguments.question || 'User input needed.';
-          stepRecord.status = 'success';
+          const question = primaryTool.arguments.question || 'Clarification needed from user.';
+          stepRecord.status = 'running';
           stepRecord.resultMessage = `Waiting for user: "${question}"`;
           this.callbacks.onStepComplete?.(stepRecord);
-          await this.clearBadges(tabId);
-          return `Agent asked user: ${question}`;
-        }
+          this.callbacks.onLog?.('Awaiting your input...');
 
-        if (primaryTool.name === 'wait') {
+          let userReply = 'Confirmed. Please proceed.';
+          if (this.callbacks.onAskUser) {
+            userReply = await this.callbacks.onAskUser(question);
+          }
+
+          if (this.aborted) {
+            await this.clearBadges(tabId);
+            return 'Execution aborted by user.';
+          }
+
+          stepRecord.status = 'success';
+          stepRecord.resultMessage = `User replied: "${userReply}"`;
+          this.callbacks.onStepComplete?.(stepRecord);
+          this.callbacks.onLog?.('Resuming task with your response...');
+
+          toolResultStr = `User responded: "${userReply}". Please proceed with the next step.`;
+        } else if (primaryTool.name === 'wait') {
           const secs = Math.min(10, Math.max(1, parseInt(primaryTool.arguments.seconds || '2', 10)));
           this.callbacks.onLog?.(`Waiting ${secs}s for page update...`);
           await this.sleep(secs * 1000);

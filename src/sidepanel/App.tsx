@@ -23,8 +23,10 @@ export const App: React.FC = () => {
   const [liveStatus, setLiveStatus] = useState('');
   const [steps, setSteps] = useState<StepRecord[]>([]);
   const [finalResult, setFinalResult] = useState<string | null>(null);
+  const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
 
   const activeExecutionRef = useRef<AgentExecution | null>(null);
+  const userPromptResolverRef = useRef<((answer: string) => void) | null>(null);
 
   if (loading) {
     return (
@@ -42,7 +44,6 @@ export const App: React.FC = () => {
   const currentModel = activeConfig.customModelId || activeConfig.selectedModel || activeDef.defaultModel;
 
   const handleStartTask = async (goal: string) => {
-    // Check if API key is provided
     if (activeDef.requiresApiKey && !activeConfig.apiKey?.trim()) {
       alert(`Please enter an API Key for ${activeDef.name} in Settings before running tasks.`);
       setCurrentTab('settings');
@@ -53,6 +54,7 @@ export const App: React.FC = () => {
     setSteps([]);
     setFinalResult(null);
     setCurrentStep(1);
+    setPendingQuestion(null);
     setLiveStatus('Initializing agent...');
 
     const startTime = Date.now();
@@ -76,6 +78,12 @@ export const App: React.FC = () => {
       onError: (err) => {
         setLiveStatus(`Error: ${err.message}`);
       },
+      onAskUser: (question: string) => {
+        setPendingQuestion(question);
+        return new Promise<string>((resolve) => {
+          userPromptResolverRef.current = resolve;
+        });
+      },
     });
 
     activeExecutionRef.current = execution;
@@ -84,7 +92,6 @@ export const App: React.FC = () => {
       const summary = await execution.run();
       setFinalResult(summary);
 
-      // Save to task history
       await saveTask({
         id: `task_${Date.now()}`,
         goal,
@@ -113,11 +120,27 @@ export const App: React.FC = () => {
       });
     } finally {
       setIsRunning(false);
+      setPendingQuestion(null);
       activeExecutionRef.current = null;
+      userPromptResolverRef.current = null;
     }
   };
 
+  const handleAnswerQuestion = (answer: string) => {
+    if (userPromptResolverRef.current) {
+      userPromptResolverRef.current(answer);
+      userPromptResolverRef.current = null;
+    }
+    setPendingQuestion(null);
+  };
+
   const handleStopTask = () => {
+    if (userPromptResolverRef.current) {
+      userPromptResolverRef.current('Aborted by user.');
+      userPromptResolverRef.current = null;
+    }
+    setPendingQuestion(null);
+
     if (activeExecutionRef.current) {
       activeExecutionRef.current.abort();
       setLiveStatus('Aborted by user.');
@@ -152,6 +175,8 @@ export const App: React.FC = () => {
             finalResult={finalResult}
             activeProvider={activeDef.name}
             activeModel={currentModel}
+            pendingQuestion={pendingQuestion}
+            onAnswerQuestion={handleAnswerQuestion}
           />
         )}
 
