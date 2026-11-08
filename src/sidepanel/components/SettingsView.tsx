@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Eye, EyeOff, Key, ExternalLink, RefreshCw, Cpu, Check, AlertCircle, Sparkles, Globe } from 'lucide-react';
 import { AllSettings, ProviderId, ModelOption } from '../../core/llm/types';
 import { PROVIDERS } from '../../core/llm/providers/registry';
@@ -28,8 +28,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const activeDef = PROVIDERS[activeProviderId];
   const activeConfig = settings.providers[activeProviderId];
 
+  // Auto-fetch OpenRouter models live on load or provider switch
+  useEffect(() => {
+    if (activeProviderId === 'openrouter' && !liveModelsMap['openrouter']) {
+      fetchLiveProviderModels('openrouter', activeConfig.apiKey || '')
+        .then((models) => {
+          if (models.length > 0) {
+            setLiveModelsMap((prev) => ({ ...prev, openrouter: models }));
+          }
+        })
+        .catch(() => {});
+    }
+  }, [activeProviderId]);
+
   const handleFetchLiveModels = async () => {
-    if (activeDef.requiresApiKey && !activeConfig.apiKey?.trim()) {
+    if (activeDef.requiresApiKey && activeProviderId !== 'openrouter' && !activeConfig.apiKey?.trim()) {
       alert(`Please enter your ${activeDef.name} API key first.`);
       return;
     }
@@ -46,10 +59,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
       if (models.length > 0) {
         setLiveModelsMap((prev) => ({ ...prev, [activeProviderId]: models }));
-        setFetchMessage(`Loaded ${models.length} live models from ${activeDef.name} endpoint!`);
+        setFetchMessage(`Loaded ${models.length} live models directly from ${activeDef.name} API!`);
         setTimeout(() => setFetchMessage(null), 3000);
       } else {
-        alert('Endpoint returned 0 models. Check your API key or network.');
+        alert('Endpoint returned 0 models. Check your network or API key.');
       }
     } catch (err: any) {
       alert(`Error fetching models from ${activeDef.name}: ${err.message}`);
@@ -151,7 +164,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <span>{activeDef.name}</span>
               {activeProviderId === 'openrouter' && (
                 <span className="text-[10px] bg-purple-500/20 text-purple-300 border border-purple-500/30 px-1 rounded">
-                  Aggregator
+                  Live API Hub
                 </span>
               )}
             </h3>
