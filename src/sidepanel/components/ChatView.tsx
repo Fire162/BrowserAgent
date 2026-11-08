@@ -38,6 +38,7 @@ interface ChatViewProps {
   maxBudgetUSD: number;
   liveCostUSD: number;
   liveTokens: number;
+  liveCachedTokens?: number;
   liveStatus: string;
   activeProvider: string;
   activeModel: string;
@@ -69,6 +70,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
   maxBudgetUSD,
   liveCostUSD,
   liveTokens,
+  liveCachedTokens = 0,
   liveStatus,
   activeProvider,
   activeModel,
@@ -348,7 +350,22 @@ export const ChatView: React.FC<ChatViewProps> = ({
               {isRunning && isLatestTurn && (
                 <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-2.5 space-y-2 text-xs">
                   <div className="flex items-center justify-between text-[11px]">
-                    <span className="text-slate-400">Step {currentStep}</span>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-slate-400">Step {currentStep}</span>
+                      {liveTokens > 0 && (
+                        <span className="text-slate-500 font-mono text-[10px]">
+                          • {liveTokens.toLocaleString()} tokens
+                        </span>
+                      )}
+                      {liveCachedTokens > 0 && (
+                        <span
+                          className="px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-400 border border-amber-500/30 text-[9px] font-mono flex items-center gap-0.5"
+                          title="Tokens reused from server cache at 90% discount"
+                        >
+                          ⚡ {liveCachedTokens.toLocaleString()} cached
+                        </span>
+                      )}
+                    </div>
                     <span className="text-emerald-400 font-mono font-medium">
                       ${liveCostUSD.toFixed(3)}
                       {maxBudgetUSD > 0 && (

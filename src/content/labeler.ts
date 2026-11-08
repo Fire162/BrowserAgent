@@ -22,16 +22,16 @@ function isElementVisible(el: HTMLElement): boolean {
     return false;
   }
   const rect = el.getBoundingClientRect();
-  if (rect.width === 0 || rect.height === 0) return false;
+  if (rect.width < 4 || rect.height < 4) return false;
 
-  // Check if roughly within or near viewport
+  // Focus on elements currently inside or immediately adjacent to the viewport
   const viewHeight = window.innerHeight || document.documentElement.clientHeight;
   const viewWidth = window.innerWidth || document.documentElement.clientWidth;
   return (
-    rect.top < viewHeight * 2 &&
-    rect.bottom > -viewHeight &&
-    rect.left < viewWidth * 1.5 &&
-    rect.right > -viewWidth * 0.5
+    rect.top < viewHeight * 1.3 &&
+    rect.bottom > -viewHeight * 0.3 &&
+    rect.left < viewWidth * 1.2 &&
+    rect.right > -viewWidth * 0.2
   );
 }
 
@@ -105,12 +105,8 @@ export function scanAndLabelElements(showVisualBadges = true): { elements: Eleme
   let idCounter = 1;
 
   for (const el of visibleElements) {
-    const id = idCounter++;
-    elementMap.set(id, el);
-
-    const rect = el.getBoundingClientRect();
-    const scrollX = window.scrollX || window.pageXOffset;
-    const scrollY = window.scrollY || window.pageYOffset;
+    const tagName = el.tagName.toLowerCase();
+    const isInput = ['input', 'textarea', 'select'].includes(tagName);
 
     const text = (
       el.innerText ||
@@ -119,11 +115,23 @@ export function scanAndLabelElements(showVisualBadges = true): { elements: Eleme
       el.getAttribute('title') ||
       (el as HTMLInputElement).value ||
       ''
-    ).trim().replace(/\s+/g, ' ').slice(0, 80);
+    ).trim().replace(/\s+/g, ' ').slice(0, 50);
+
+    // Skip empty non-interactive tags with no accessible label, text, or input type
+    if (!text && !isInput && !el.getAttribute('role')) {
+      continue;
+    }
+
+    const id = idCounter++;
+    elementMap.set(id, el);
+
+    const rect = el.getBoundingClientRect();
+    const scrollX = window.scrollX || window.pageXOffset;
+    const scrollY = window.scrollY || window.pageYOffset;
 
     const desc: ElementDescriptor = {
       id,
-      tagName: el.tagName.toLowerCase(),
+      tagName,
       text,
       type: (el as HTMLInputElement).type,
       role: el.getAttribute('role') || undefined,
@@ -163,13 +171,20 @@ export function scanAndLabelElements(showVisualBadges = true): { elements: Eleme
     }
   }
 
-  // Format elements list for LLM context
+  // Format elements list for LLM context (compact to minimize token consumption)
   const lines = descriptors.map((d) => {
     let extra = '';
     if (d.placeholder) extra += ` placeholder="${d.placeholder}"`;
     if (d.role) extra += ` role="${d.role}"`;
     if (d.type) extra += ` type="${d.type}"`;
-    if (d.href) extra += ` href="${d.href.slice(0, 50)}"`;
+    if (d.href) {
+      try {
+        const parsed = new URL(d.href);
+        extra += ` href="${parsed.pathname.slice(0, 35)}"`;
+      } catch {
+        extra += ` href="${d.href.slice(0, 35)}"`;
+      }
+    }
     const label = d.text ? ` "${d.text}"` : '';
     return `[${d.id}] <${d.tagName}>${label}${extra}`;
   });

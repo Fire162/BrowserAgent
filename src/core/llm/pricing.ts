@@ -6,7 +6,8 @@ export function estimateCostUSD(
   modelId: string,
   promptTokens = 0,
   completionTokens = 0,
-  reportedCost?: number
+  reportedCost?: number,
+  cachedTokens = 0
 ): number {
   if (typeof reportedCost === 'number' && reportedCost > 0) {
     return reportedCost;
@@ -29,7 +30,14 @@ export function estimateCostUSD(
   // Frontier tier: ~$2.50 / 1M input, ~$10.00 / 1M output
   const inputPricePerM = isBudget ? 0.15 : 2.50;
   const outputPricePerM = isBudget ? 0.60 : 10.00;
+  // Cached input tokens receive ~90% prompt cache discount across Anthropic, DeepSeek, and OpenAI
+  const cachedPricePerM = inputPricePerM * 0.10;
 
-  const cost = (promptTokens / 1_000_000) * inputPricePerM + (completionTokens / 1_000_000) * outputPricePerM;
+  const uncachedPromptTokens = Math.max(0, promptTokens - cachedTokens);
+  const cost =
+    (uncachedPromptTokens / 1_000_000) * inputPricePerM +
+    (cachedTokens / 1_000_000) * cachedPricePerM +
+    (completionTokens / 1_000_000) * outputPricePerM;
+
   return Math.round(cost * 100000) / 100000;
 }

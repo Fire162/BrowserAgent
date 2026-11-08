@@ -33,6 +33,7 @@ export const App: React.FC = () => {
   const [liveStatus, setLiveStatus] = useState('');
   const [liveCostUSD, setLiveCostUSD] = useState(0);
   const [liveTokens, setLiveTokens] = useState(0);
+  const [liveCachedTokens, setLiveCachedTokens] = useState(0);
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
   const [targetTab, setTargetTab] = useState<TargetTabInfo | null>(null);
@@ -126,6 +127,7 @@ export const App: React.FC = () => {
     setCurrentStep(1);
     setLiveCostUSD(0);
     setLiveTokens(0);
+    setLiveCachedTokens(0);
     setPendingQuestion(null);
     setLiveStatus('');
 
@@ -181,6 +183,7 @@ export const App: React.FC = () => {
     setCurrentStep(1);
     setLiveCostUSD(0);
     setLiveTokens(0);
+    setLiveCachedTokens(0);
     setPendingQuestion(null);
     setLiveStatus('Initializing agent on assigned tab...');
 
@@ -212,9 +215,10 @@ export const App: React.FC = () => {
             return nextTurns;
           });
         },
-        onCostUpdate: (cost, tokens) => {
+        onCostUpdate: (cost, tokens, cached) => {
           setLiveCostUSD(cost);
           setLiveTokens(tokens);
+          if (cached !== undefined) setLiveCachedTokens(cached);
         },
         onLog: (msg) => {
           setLiveStatus(msg);
@@ -462,9 +466,10 @@ export const App: React.FC = () => {
             return nextTurns;
           });
         },
-        onCostUpdate: (cost, tokens) => {
+        onCostUpdate: (cost, tokens, cached) => {
           setLiveCostUSD(cost);
           setLiveTokens(tokens);
+          if (cached !== undefined) setLiveCachedTokens(cached);
         },
         onLog: (msg) => setLiveStatus(msg),
         onFinish: (summary) => {
@@ -531,6 +536,7 @@ export const App: React.FC = () => {
             maxBudgetUSD={settings.agent.maxBudgetUSD}
             liveCostUSD={liveCostUSD}
             liveTokens={liveTokens}
+            liveCachedTokens={liveCachedTokens}
             liveStatus={liveStatus}
             activeProvider={activeDef.name}
             activeModel={currentModel}

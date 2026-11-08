@@ -144,7 +144,8 @@ export async function callGemini(
 
   const promptTokens = json.usageMetadata?.promptTokenCount || 0;
   const completionTokens = json.usageMetadata?.candidatesTokenCount || 0;
-  const estimatedCost = estimateCostUSD(model, promptTokens, completionTokens);
+  const cachedTokens = json.usageMetadata?.cachedContentTokenCount || 0;
+  const estimatedCost = estimateCostUSD(model, promptTokens, completionTokens, undefined, cachedTokens);
 
   return {
     text,
@@ -154,6 +155,7 @@ export async function callGemini(
       promptTokens,
       completionTokens,
       totalTokens: json.usageMetadata?.totalTokenCount || (promptTokens + completionTokens),
+      cachedTokens,
     },
     estimatedCostUSD: estimatedCost,
   };

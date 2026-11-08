@@ -71,6 +71,7 @@ export interface LLMCompletionResponse {
     promptTokens?: number;
     completionTokens?: number;
     totalTokens?: number;
+    cachedTokens?: number;
   };
   estimatedCostUSD?: number;
 }

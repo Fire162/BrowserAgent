@@ -105,7 +105,7 @@ export async function callAnthropic(
     }
   }
 
-  const formattedTools = tools.map((t) => ({
+  const formattedTools = tools.map((t, idx) => ({
     name: t.name,
     description: t.description,
     input_schema: {
@@ -113,7 +113,19 @@ export async function callAnthropic(
       properties: t.parameters.properties,
       required: t.parameters.required || [],
     },
+    // Cache the entire toolset via cache_control on the last tool
+    ...(idx === tools.length - 1 ? { cache_control: { type: 'ephemeral' } } : {}),
   }));
+
+  const systemPromptBlock = systemMessage?.content
+    ? [
+        {
+          type: 'text',
+          text: systemMessage.content,
+          cache_control: { type: 'ephemeral' },
+        },
+      ]
+    : undefined;
 
   const res = await fetchWithRetry('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -121,13 +133,14 @@ export async function callAnthropic(
       'Content-Type': 'application/json',
       'x-api-key': apiKey,
       'anthropic-version': '2023-06-01',
+      'anthropic-beta': 'prompt-caching-2024-07-31',
       'anthropic-dangerous-direct-browser-access': 'true',
     },
     body: JSON.stringify({
       model,
       max_tokens: 4096,
       temperature,
-      system: systemMessage?.content,
+      system: systemPromptBlock,
       messages: formattedMessages,
       tools: formattedTools.length > 0 ? formattedTools : undefined,
     }),
@@ -160,7 +173,9 @@ export async function callAnthropic(
 
   const promptTokens = json.usage?.input_tokens || 0;
   const completionTokens = json.usage?.output_tokens || 0;
-  const estimatedCost = estimateCostUSD(model, promptTokens, completionTokens);
+  const cachedTokens = json.usage?.cache_read_input_tokens || 0;
+  const totalTokens = promptTokens + completionTokens + (json.usage?.cache_creation_input_tokens || 0);
+  const estimatedCost = estimateCostUSD(model, promptTokens, completionTokens, undefined, cachedTokens);
 
   return {
     text,
@@ -169,7 +184,8 @@ export async function callAnthropic(
     usage: {
       promptTokens,
       completionTokens,
-      totalTokens: promptTokens + completionTokens,
+      totalTokens,
+      cachedTokens,
     },
     estimatedCostUSD: estimatedCost,
   };

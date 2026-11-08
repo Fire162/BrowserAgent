@@ -20,6 +20,7 @@ export interface StepRecord {
   status: 'running' | 'success' | 'failed';
   costUSD?: number;
   screenshotUrl?: string;
+  cachedTokens?: number;
 }
 
 export interface AgentRunCallbacks {
@@ -29,7 +30,7 @@ export interface AgentRunCallbacks {
   onFinish?: (summary: string) => void;
   onError?: (error: Error) => void;
   onAskUser?: (question: string) => Promise<string>;
-  onCostUpdate?: (costUSD: number, totalTokens: number) => void;
+  onCostUpdate?: (costUSD: number, totalTokens: number, cachedTokens?: number) => void;
   onTargetTabChanged?: (tabInfo: TargetTabInfo) => void;
 }
 
@@ -42,6 +43,7 @@ export class AgentExecution {
   private stepCounter = 1;
   private accumulatedCostUSD = 0;
   private accumulatedTokens = 0;
+  private accumulatedCachedTokens = 0;
   private recordedSteps: StepRecord[] = [];
   private pendingScreenshotUrl?: string;
   private targetTabId?: number;
@@ -197,6 +199,35 @@ export class AgentExecution {
     }
   }
 
+  /**
+   * Prunes past bulky DOM observations and visual screenshots from older steps.
+   * Keeps the latest live observation intact while replacing older DOM listings with compact stubs.
+   * This keeps token consumption flat across steps and maximizes prompt cache hits.
+   */
+  private pruneHistoricalMessages(): void {
+    for (let i = 0; i < this.messages.length; i++) {
+      const msg = this.messages[i];
+
+      // 1. Remove past base64 screenshot data (model already inspected and acted on it)
+      if (msg.imageUrl) {
+        msg.imageUrl = undefined;
+      }
+
+      // 2. Condense past DOM observations into a lightweight 2-line stub
+      if (msg.role === 'user' && typeof msg.content === 'string' && msg.content.includes('[CURRENT PAGE OBSERVATION]')) {
+        const urlMatch = msg.content.match(/URL:\s*([^\n]+)/);
+        const titleMatch = msg.content.match(/Title:\s*([^\n]+)/);
+        const url = urlMatch ? urlMatch[1] : '';
+        const title = titleMatch ? titleMatch[1] : '';
+
+        const guidanceMatch = msg.content.match(/\[USER REAL-TIME GUIDANCE \/ STEERING MESSAGE\]:\n"([^"]+)"/);
+        const guidanceText = guidanceMatch ? `\n[Steering Applied]: "${guidanceMatch[1]}"` : '';
+
+        msg.content = `[HISTORICAL STEP OBSERVATION]\nPage: ${title} (${url})${guidanceText}\n(DOM elements list omitted from history to conserve tokens; live elements provided in latest observation)`;
+      }
+    }
+  }
+
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
@@ -306,6 +337,9 @@ export class AgentExecution {
         this.callbacks.onStepStart?.(this.stepCounter);
         await this.ensureContentScript(tabId);
 
+        // Prune past bulky DOM observations and past images to keep tokens flat and maximize server prompt caching
+        this.pruneHistoricalMessages();
+
         // 1. Observe DOM on the assigned target tab
         let snapshot: any;
         try {
@@ -317,10 +351,10 @@ export class AgentExecution {
         }
 
         let elementsList = snapshot.snapshotText || 'No visible interactive elements detected.';
-        // Clean line-based slicing if elements list exceeds 8000 characters
-        if (elementsList.length > 8000) {
-          const cutIdx = elementsList.lastIndexOf('\n', 8000);
-          elementsList = (cutIdx > 0 ? elementsList.slice(0, cutIdx) : elementsList.slice(0, 8000)) + '\n... [Remaining elements truncated; scroll to view more]';
+        // Clean line-based slicing if elements list exceeds 6000 characters
+        if (elementsList.length > 6000) {
+          const cutIdx = elementsList.lastIndexOf('\n', 6000);
+          elementsList = (cutIdx > 0 ? elementsList.slice(0, cutIdx) : elementsList.slice(0, 6000)) + '\n... [Remaining elements truncated; scroll to view more]';
         }
 
         let observationContent = `[CURRENT PAGE OBSERVATION]
@@ -372,14 +406,21 @@ What is your next action?`;
           throw callErr;
         }
 
-        // Track spending and tokens
+        // Track spending, tokens, and prompt cache hits
         if (response.estimatedCostUSD) {
           this.accumulatedCostUSD += response.estimatedCostUSD;
         }
         if (response.usage?.totalTokens) {
           this.accumulatedTokens += response.usage.totalTokens;
         }
-        this.callbacks.onCostUpdate?.(this.accumulatedCostUSD, this.accumulatedTokens);
+        if (response.usage?.cachedTokens) {
+          this.accumulatedCachedTokens += response.usage.cachedTokens;
+        }
+        this.callbacks.onCostUpdate?.(
+          this.accumulatedCostUSD,
+          this.accumulatedTokens,
+          this.accumulatedCachedTokens
+        );
 
         const thought = response.text?.trim() || '';
         const toolCalls = response.toolCalls || [];
@@ -392,6 +433,7 @@ What is your next action?`;
             status: 'success',
             resultMessage: 'Agent reflected without dispatching a tool.',
             costUSD: response.estimatedCostUSD,
+            cachedTokens: response.usage?.cachedTokens,
           };
           this.recordedSteps.push(stepRecord);
           this.callbacks.onStepComplete?.(stepRecord);
@@ -414,6 +456,7 @@ What is your next action?`;
           timestamp: Date.now(),
           status: 'running',
           costUSD: response.estimatedCostUSD,
+          cachedTokens: response.usage?.cachedTokens,
         };
 
         const executedResults: { id: string; name: string; resultStr: string; imageUrl?: string }[] = [];

@@ -51,7 +51,21 @@ export async function callOpenRouter(
     throw new Error('OpenRouter API key is required. Please set it in Settings.');
   }
 
+  const isAnthropicModel = model.toLowerCase().includes('anthropic') || model.toLowerCase().includes('claude');
+
   const formattedMessages = messages.map((m) => {
+    if (m.role === 'system' && isAnthropicModel) {
+      return {
+        role: 'system',
+        content: [
+          {
+            type: 'text',
+            text: m.content,
+            cache_control: { type: 'ephemeral' },
+          },
+        ],
+      };
+    }
     if (m.role === 'tool') {
       return {
         role: 'tool',
@@ -99,13 +113,14 @@ export async function callOpenRouter(
     };
   });
 
-  const formattedTools = tools.map((t) => ({
+  const formattedTools = tools.map((t, idx) => ({
     type: 'function',
     function: {
       name: t.name,
       description: t.description,
       parameters: t.parameters,
     },
+    ...(isAnthropicModel && idx === tools.length - 1 ? { cache_control: { type: 'ephemeral' } } : {}),
   }));
 
   const res = await fetchWithRetry('https://openrouter.ai/api/v1/chat/completions', {
@@ -153,7 +168,18 @@ export async function callOpenRouter(
 
   const promptTokens = json.usage?.prompt_tokens || 0;
   const completionTokens = json.usage?.completion_tokens || 0;
-  const estimatedCost = estimateCostUSD(model, promptTokens, completionTokens, json.usage?.total_cost);
+  const cachedTokens =
+    json.usage?.prompt_tokens_details?.cached_tokens ||
+    json.usage?.cache_read_input_tokens ||
+    json.usage?.prompt_cache_hit_tokens ||
+    0;
+  const estimatedCost = estimateCostUSD(
+    model,
+    promptTokens,
+    completionTokens,
+    json.usage?.total_cost,
+    cachedTokens
+  );
 
   return {
     text: choice.message?.content || '',
@@ -163,6 +189,7 @@ export async function callOpenRouter(
       promptTokens,
       completionTokens,
       totalTokens: json.usage?.total_tokens || (promptTokens + completionTokens),
+      cachedTokens,
     },
     estimatedCostUSD: estimatedCost,
   };

@@ -138,7 +138,11 @@ export async function callOpenAICompatible({
 
   const promptTokens = json.usage?.prompt_tokens || 0;
   const completionTokens = json.usage?.completion_tokens || 0;
-  const estimatedCost = estimateCostUSD(model, promptTokens, completionTokens);
+  const cachedTokens =
+    json.usage?.prompt_tokens_details?.cached_tokens ||
+    json.usage?.prompt_cache_hit_tokens ||
+    0;
+  const estimatedCost = estimateCostUSD(model, promptTokens, completionTokens, undefined, cachedTokens);
 
   return {
     text: choice.message?.content || '',
@@ -148,6 +152,7 @@ export async function callOpenAICompatible({
       promptTokens,
       completionTokens,
       totalTokens: json.usage?.total_tokens || (promptTokens + completionTokens),
+      cachedTokens,
     },
     estimatedCostUSD: estimatedCost,
   };
