@@ -86,12 +86,12 @@ export const ChatView: React.FC<ChatViewProps> = ({
   const scrollRef = useRef<HTMLDivElement>(null);
   const answerInputRef = useRef<HTMLInputElement>(null);
 
-  // Auto-scroll when new content arrives
+  // Auto-scroll only when new content or turns arrive (never on 1s thinking timer)
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [turns, liveStatus, pendingQuestion, isPaused, isRunning, thinkingSeconds]);
+  }, [turns, liveStatus, pendingQuestion, isPaused, isRunning]);
 
   // Real-time Thinking seconds timer
   useEffect(() => {

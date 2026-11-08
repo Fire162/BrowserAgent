@@ -40,7 +40,11 @@ export function performClick(params: { elementId?: string | number; selector?: s
   }
 
   flashElement(el);
-  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  try {
+    el.scrollIntoView({ behavior: 'instant', block: 'center' });
+  } catch {
+    el.scrollIntoView(true);
+  }
 
   // Realistic event dispatching
   const rect = el.getBoundingClientRect();
@@ -78,7 +82,11 @@ export function performType(params: {
   }
 
   flashElement(el);
-  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  try {
+    el.scrollIntoView({ behavior: 'instant', block: 'center' });
+  } catch {
+    el.scrollIntoView(true);
+  }
   el.focus();
 
   const isInput = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement;
@@ -139,7 +147,47 @@ export function performPressKey(key: string): { success: boolean; message: strin
 
 export function performScroll(direction: 'down' | 'up', amount = 500): { success: boolean; message: string } {
   const delta = direction === 'down' ? amount : -amount;
-  window.scrollBy({ top: delta, behavior: 'smooth' });
+  const beforeY = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
+
+  // 1. Primary window/document scroll with 'instant' behavior (executes immediately in background tabs)
+  try {
+    window.scrollBy({ top: delta, behavior: 'instant' });
+  } catch {
+    window.scrollBy(0, delta);
+  }
+
+  // 2. Direct scroll increment fallback for documentElement / scrollingElement
+  if (document.scrollingElement) {
+    document.scrollingElement.scrollTop += delta;
+  } else {
+    document.documentElement.scrollTop += delta;
+    if (document.body) {
+      document.body.scrollTop += delta;
+    }
+  }
+
+  const afterY = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
+
+  // 3. Fallback for modern SPAs with nested overflow scroll containers (e.g., Twitter, Docs, Gmail)
+  if (Math.abs(afterY - beforeY) < 5) {
+    const scrollables = Array.from(document.querySelectorAll<HTMLElement>('*')).filter((elem) => {
+      if (elem === document.body || elem === document.documentElement) return false;
+      const style = window.getComputedStyle(elem);
+      const overflowY = style.overflowY;
+      const canScroll = (overflowY === 'auto' || overflowY === 'scroll') && elem.scrollHeight > elem.clientHeight;
+      if (!canScroll) return false;
+      const rect = elem.getBoundingClientRect();
+      return rect.width > 200 && rect.height > 200;
+    });
+
+    if (scrollables.length > 0) {
+      scrollables.sort((a, b) => b.clientWidth * b.clientHeight - a.clientWidth * a.clientHeight);
+      const targetContainer = scrollables[0];
+      targetContainer.scrollTop += delta;
+      return { success: true, message: `Scrolled container <${targetContainer.tagName.toLowerCase()}> ${direction} by ${amount}px` };
+    }
+  }
+
   return { success: true, message: `Scrolled ${direction} by ${amount}px` };
 }
 

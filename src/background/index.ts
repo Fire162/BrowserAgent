@@ -55,7 +55,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           chrome.tabs.query({ active: true, windowId }, (activeTabs) => {
             const previousActiveTabId = activeTabs?.[0]?.id;
 
-            // Activate agent's tab momentarily to capture frame
+            // Activate agent's tab momentarily to capture frame (ultra-fast 35ms bounce-back)
             chrome.tabs.update(tabId, { active: true }, () => {
               setTimeout(() => {
                 chrome.tabs.captureVisibleTab(windowId, { format: 'jpeg', quality: 80 }, (dataUrl) => {
@@ -72,7 +72,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                     sendResponse({ success: true, dataUrl });
                   }
                 });
-              }, 120);
+              }, 35);
             });
           });
         } else {

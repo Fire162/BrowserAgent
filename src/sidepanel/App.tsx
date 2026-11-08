@@ -40,9 +40,14 @@ export const App: React.FC = () => {
   const activeExecutionRef = useRef<AgentExecution | null>(null);
   const userPromptResolverRef = useRef<((answer: string) => void) | null>(null);
 
-  // Initialize and detect active tab on mount
+  // Dynamically track active tab when idle, locking onto targetTab when running
   useEffect(() => {
-    if (typeof chrome !== 'undefined' && chrome.tabs) {
+    if (typeof chrome === 'undefined' || !chrome.tabs) return;
+
+    const updateActiveTab = () => {
+      // If a task is actively running or session is ongoing, do NOT switch away from locked tab
+      if (isRunning || activeExecutionRef.current) return;
+
       chrome.tabs.query({ active: true, currentWindow: true }).then((tabs) => {
         if (tabs && tabs.length > 0 && tabs[0].id) {
           setTargetTab({
@@ -53,8 +58,43 @@ export const App: React.FC = () => {
           });
         }
       });
-    }
-  }, []);
+    };
+
+    updateActiveTab();
+
+    const handleActivated = (activeInfo: chrome.tabs.TabActiveInfo) => {
+      if (isRunning || activeExecutionRef.current) return;
+      chrome.tabs.get(activeInfo.tabId, (tab) => {
+        if (chrome.runtime.lastError || !tab) return;
+        setTargetTab({
+          id: tab.id!,
+          title: tab.title || 'Tab #' + tab.id,
+          url: tab.url || '',
+          favIconUrl: tab.favIconUrl,
+        });
+      });
+    };
+
+    const handleUpdated = (tabId: number, changeInfo: chrome.tabs.TabChangeInfo, tab: chrome.tabs.Tab) => {
+      if (isRunning || activeExecutionRef.current) return;
+      if (tab.active && (changeInfo.status === 'complete' || changeInfo.title || changeInfo.url)) {
+        setTargetTab({
+          id: tab.id!,
+          title: tab.title || 'Tab #' + tab.id,
+          url: tab.url || '',
+          favIconUrl: tab.favIconUrl,
+        });
+      }
+    };
+
+    chrome.tabs.onActivated.addListener(handleActivated);
+    chrome.tabs.onUpdated.addListener(handleUpdated);
+
+    return () => {
+      chrome.tabs.onActivated.removeListener(handleActivated);
+      chrome.tabs.onUpdated.removeListener(handleUpdated);
+    };
+  }, [isRunning]);
 
   const handleFocusTab = () => {
     if (targetTab?.id && typeof chrome !== 'undefined' && chrome.tabs) {
@@ -88,6 +128,20 @@ export const App: React.FC = () => {
     setLiveTokens(0);
     setPendingQuestion(null);
     setLiveStatus('');
+
+    // Re-detect current active tab for new session
+    if (typeof chrome !== 'undefined' && chrome.tabs) {
+      chrome.tabs.query({ active: true, currentWindow: true }).then((tabs) => {
+        if (tabs && tabs[0]?.id) {
+          setTargetTab({
+            id: tabs[0].id,
+            title: tabs[0].title || 'Active Tab',
+            url: tabs[0].url || '',
+            favIconUrl: tabs[0].favIconUrl,
+          });
+        }
+      });
+    }
   };
 
   if (loading) {
