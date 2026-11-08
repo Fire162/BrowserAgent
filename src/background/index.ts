@@ -51,17 +51,29 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
         const windowId = tab.windowId;
         if (!tab.active) {
-          // If tab is in background, activate momentarily to capture
-          chrome.tabs.update(tabId, { active: true }, () => {
-            setTimeout(() => {
-              chrome.tabs.captureVisibleTab(windowId, { format: 'jpeg', quality: 80 }, (dataUrl) => {
-                if (chrome.runtime.lastError) {
-                  sendResponse({ success: false, error: chrome.runtime.lastError.message });
-                } else {
-                  sendResponse({ success: true, dataUrl });
-                }
-              });
-            }, 150);
+          // Find the user's currently active tab in this window
+          chrome.tabs.query({ active: true, windowId }, (activeTabs) => {
+            const previousActiveTabId = activeTabs?.[0]?.id;
+
+            // Activate agent's tab momentarily to capture frame
+            chrome.tabs.update(tabId, { active: true }, () => {
+              setTimeout(() => {
+                chrome.tabs.captureVisibleTab(windowId, { format: 'jpeg', quality: 80 }, (dataUrl) => {
+                  const captureError = chrome.runtime.lastError?.message;
+
+                  // Instantly bounce back to user's previous active tab!
+                  if (previousActiveTabId && previousActiveTabId !== tabId) {
+                    chrome.tabs.update(previousActiveTabId, { active: true });
+                  }
+
+                  if (captureError) {
+                    sendResponse({ success: false, error: captureError });
+                  } else {
+                    sendResponse({ success: true, dataUrl });
+                  }
+                });
+              }, 120);
+            });
           });
         } else {
           chrome.tabs.captureVisibleTab(windowId, { format: 'jpeg', quality: 80 }, (dataUrl) => {

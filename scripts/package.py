@@ -6,13 +6,13 @@ root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 dist_dir = os.path.join(root_dir, 'dist')
 
 pkg_path = os.path.join(root_dir, 'package.json')
-version = '1.1.2'
+version = '1.1.3'
 if os.path.exists(pkg_path):
     with open(pkg_path, 'r') as f:
         try:
             version = json.load(f).get('version', '1.0.0')
         except Exception:
-            version = '1.1.2'
+            version = '1.1.3'
 
 zip_name = f'browseragent-v{version}.zip'
 zip_path = os.path.join(root_dir, zip_name)
