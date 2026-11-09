@@ -18,11 +18,12 @@ import {
   RotateCcw,
   User,
   Bot,
+  Coins,
 } from 'lucide-react';
-import { TargetTabInfo } from '../../core/agent/loop';
+import { TargetTabInfo, BudgetLimitDecision } from '../../core/agent/loop';
 import { StepTimeline } from './StepTimeline';
 import { MarkdownViewer } from './MarkdownViewer';
-import { ChatTurn } from '../App';
+import { ChatTurn, BudgetLimitEvent } from '../App';
 
 interface ChatViewProps {
   isRunning: boolean;
@@ -44,6 +45,8 @@ interface ChatViewProps {
   activeModel: string;
   pendingQuestion?: string | null;
   onAnswerQuestion?: (answer: string) => void;
+  pendingBudgetLimit?: BudgetLimitEvent | null;
+  onResolveBudgetLimit?: (decision: BudgetLimitDecision) => void;
   targetTab?: TargetTabInfo | null;
   onFocusTab?: () => void;
   onCreateNewTab?: () => void;
@@ -77,6 +80,8 @@ export const ChatView: React.FC<ChatViewProps> = ({
   activeModel,
   pendingQuestion,
   onAnswerQuestion,
+  pendingBudgetLimit,
+  onResolveBudgetLimit,
   targetTab,
   onFocusTab,
   onCreateNewTab,
@@ -84,6 +89,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
 }) => {
   const [inputText, setInputText] = useState('');
   const [answerInput, setAnswerInput] = useState('');
+  const [customBudgetInput, setCustomBudgetInput] = useState('');
   const [steeringToast, setSteeringToast] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [thinkingSeconds, setThinkingSeconds] = useState(0);
@@ -95,7 +101,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [turns, liveStatus, pendingQuestion, isPaused, isRunning]);
+  }, [turns, liveStatus, pendingQuestion, pendingBudgetLimit, isPaused, isRunning]);
 
   // Real-time Thinking seconds timer
   useEffect(() => {
@@ -197,7 +203,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
     const totalStepsCount = turns.reduce((acc, t) => acc + t.steps.length, 0);
 
     const fullSessionData = {
-      version: '1.1.9',
+      version: '1.2.0',
       exportTimestamp: new Date().toISOString(),
       session: {
         provider: activeProvider,
@@ -637,6 +643,99 @@ export const ChatView: React.FC<ChatViewProps> = ({
         <div className="mx-3.5 mb-1 py-1 px-2.5 bg-sky-500/20 border border-sky-500/40 text-sky-300 text-[11px] rounded-lg flex items-center gap-1.5 animate-fade-in">
           <Navigation className="h-3 w-3" />
           <span>Steering instruction queued for next step!</span>
+        </div>
+      )}
+
+      {/* PINNED Interactive Budget Limit Hit Dialog */}
+      {pendingBudgetLimit && (
+        <div className="mx-3.5 mb-2 bg-gradient-to-r from-amber-950/90 to-slate-900 border-2 border-amber-500 rounded-xl p-3.5 space-y-3 shadow-xl shadow-amber-500/20 animate-fade-in z-20">
+          <div className="flex items-start justify-between">
+            <div className="flex items-center gap-2">
+              <div className="h-8 w-8 rounded-lg bg-amber-500/20 border border-amber-500/40 flex items-center justify-center shrink-0">
+                <Coins className="h-4 w-4 text-amber-400" />
+              </div>
+              <div>
+                <span className="text-xs font-bold text-amber-300 block">Spending Limit Reached</span>
+                <span className="text-[11px] text-slate-300 font-mono">
+                  Spent: <strong className="text-white">${pendingBudgetLimit.currentSpentUSD.toFixed(4)}</strong> / Limit: ${pendingBudgetLimit.currentCapUSD.toFixed(2)} USD
+                </span>
+              </div>
+            </div>
+            <span className="text-[9px] uppercase font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40">
+              Budget Decision
+            </span>
+          </div>
+
+          <p className="text-xs text-slate-200">
+            How much would you like to set as the new budget to continue?
+          </p>
+
+          {/* Quick Increment Chips */}
+          <div className="space-y-1">
+            <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider block">Quick Extend Options:</span>
+            <div className="grid grid-cols-3 gap-1.5">
+              {[0.25, 0.50, 1.00].map((addAmount) => {
+                const target = Math.max(
+                  pendingBudgetLimit.currentCapUSD + addAmount,
+                  Math.ceil((pendingBudgetLimit.currentSpentUSD + addAmount) * 100) / 100
+                );
+                return (
+                  <button
+                    key={addAmount}
+                    type="button"
+                    onClick={() => onResolveBudgetLimit?.({ action: 'extend', newBudgetUSD: target })}
+                    className="px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-amber-400 text-left transition-colors"
+                  >
+                    <div className="text-[11px] font-bold text-amber-300">
+                      +${addAmount.toFixed(2)}
+                    </div>
+                    <div className="text-[9px] text-slate-400 font-mono">
+                      New: ${target.toFixed(2)}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Custom Budget Input & Conclude Buttons */}
+          <div className="pt-1 flex items-center gap-2">
+            <div className="relative flex-1">
+              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 text-xs font-mono">$</span>
+              <input
+                type="number"
+                step="0.10"
+                min={Math.ceil(pendingBudgetLimit.currentSpentUSD * 100) / 100 + 0.05}
+                value={customBudgetInput}
+                onChange={(e) => setCustomBudgetInput(e.target.value)}
+                placeholder={`Custom (e.g. ${(pendingBudgetLimit.currentSpentUSD + 0.5).toFixed(2)})`}
+                className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-6 pr-2 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-400 font-mono"
+              />
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                const val = parseFloat(customBudgetInput);
+                const newBudget = !isNaN(val) && val > pendingBudgetLimit.currentSpentUSD
+                  ? val
+                  : pendingBudgetLimit.currentCapUSD + 0.5;
+                onResolveBudgetLimit?.({ action: 'extend', newBudgetUSD: newBudget });
+                setCustomBudgetInput('');
+              }}
+              className="px-3 py-1.5 bg-sky-500 hover:bg-sky-400 text-white rounded-lg text-xs font-semibold shrink-0 transition-colors shadow-sm shadow-sky-500/20"
+            >
+              Extend
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onResolveBudgetLimit?.({ action: 'conclude' })}
+              className="px-2.5 py-1.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 rounded-lg text-xs font-medium shrink-0 transition-colors"
+            >
+              Conclude
+            </button>
+          </div>
         </div>
       )}
 

@@ -4,7 +4,7 @@ import { SettingsView } from './components/SettingsView';
 import { ChatView } from './components/ChatView';
 import { HistoryView } from './components/HistoryView';
 import { useSettings } from './hooks/useSettings';
-import { AgentExecution, StepRecord, TargetTabInfo } from '../core/agent/loop';
+import { AgentExecution, StepRecord, TargetTabInfo, BudgetLimitDecision } from '../core/agent/loop';
 import { saveTask, TaskRecord } from '../core/storage/db';
 import { PROVIDERS } from '../core/llm/providers/registry';
 
@@ -16,6 +16,11 @@ export interface ChatTurn {
   resultSummary?: string | null;
   status: 'running' | 'completed' | 'failed' | 'paused';
   steeringMessages?: string[];
+}
+
+export interface BudgetLimitEvent {
+  currentSpentUSD: number;
+  currentCapUSD: number;
 }
 
 export const App: React.FC = () => {
@@ -37,10 +42,12 @@ export const App: React.FC = () => {
   const [liveCachedTokens, setLiveCachedTokens] = useState(0);
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
+  const [pendingBudgetLimit, setPendingBudgetLimit] = useState<BudgetLimitEvent | null>(null);
   const [targetTab, setTargetTab] = useState<TargetTabInfo | null>(null);
 
   const activeExecutionRef = useRef<AgentExecution | null>(null);
   const userPromptResolverRef = useRef<((answer: string) => void) | null>(null);
+  const budgetLimitResolverRef = useRef<((decision: BudgetLimitDecision) => void) | null>(null);
 
   // Dynamically track active tab when idle, locking onto targetTab when running
   useEffect(() => {
@@ -130,6 +137,11 @@ export const App: React.FC = () => {
     setLiveTokens(0);
     setLiveCachedTokens(0);
     setPendingQuestion(null);
+    setPendingBudgetLimit(null);
+    if (budgetLimitResolverRef.current) {
+      budgetLimitResolverRef.current({ action: 'conclude' });
+      budgetLimitResolverRef.current = null;
+    }
     setLiveStatus('');
 
     // Re-detect current active tab for new session
@@ -245,6 +257,12 @@ export const App: React.FC = () => {
           setPendingQuestion(question);
           return new Promise<string>((resolve) => {
             userPromptResolverRef.current = resolve;
+          });
+        },
+        onBudgetLimitReached: (currentSpentUSD: number, currentCapUSD: number) => {
+          setPendingBudgetLimit({ currentSpentUSD, currentCapUSD });
+          return new Promise<BudgetLimitDecision>((resolve) => {
+            budgetLimitResolverRef.current = resolve;
           });
         },
         onTargetTabChanged: (info) => {
@@ -438,6 +456,14 @@ export const App: React.FC = () => {
     setPendingQuestion(null);
   };
 
+  const handleResolveBudgetLimit = (decision: BudgetLimitDecision) => {
+    if (budgetLimitResolverRef.current) {
+      budgetLimitResolverRef.current(decision);
+      budgetLimitResolverRef.current = null;
+    }
+    setPendingBudgetLimit(null);
+  };
+
   const handleResumeHistoryTask = (task: TaskRecord) => {
     const historyTurn: ChatTurn = {
       id: `history_${task.createdAt}`,
@@ -506,6 +532,12 @@ export const App: React.FC = () => {
             userPromptResolverRef.current = resolve;
           });
         },
+        onBudgetLimitReached: (currentSpentUSD: number, currentCapUSD: number) => {
+          setPendingBudgetLimit({ currentSpentUSD, currentCapUSD });
+          return new Promise<BudgetLimitDecision>((resolve) => {
+            budgetLimitResolverRef.current = resolve;
+          });
+        },
         onTargetTabChanged: (info) => {
           setTargetTab(info);
         },
@@ -555,6 +587,8 @@ export const App: React.FC = () => {
             activeModel={currentModel}
             pendingQuestion={pendingQuestion}
             onAnswerQuestion={handleAnswerQuestion}
+            pendingBudgetLimit={pendingBudgetLimit}
+            onResolveBudgetLimit={handleResolveBudgetLimit}
             targetTab={targetTab}
             onFocusTab={handleFocusTab}
             onCreateNewTab={handleCreateNewTab}

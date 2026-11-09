@@ -157,4 +157,43 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     });
     return true;
   }
+
+  if (action === 'show_notification') {
+    const { title, message } = params || {};
+    try {
+      if (typeof chrome !== 'undefined' && chrome.notifications) {
+        chrome.notifications.create(
+          `browseragent_notice_${Date.now()}`,
+          {
+            type: 'basic',
+            iconUrl: chrome.runtime.getURL('icons/icon128.png'),
+            title: title || 'BrowserAgent',
+            message: message || 'BrowserAgent needs your attention.',
+            priority: 2,
+            requireInteraction: true,
+          },
+          (notificationId) => {
+            sendResponse({ success: true, notificationId });
+          }
+        );
+        return true;
+      }
+    } catch (e: any) {
+      sendResponse({ success: false, error: e?.message });
+      return true;
+    }
+    sendResponse({ success: false, error: 'Notifications API unavailable' });
+    return true;
+  }
 });
+
+// Focus extension window / tab when user clicks the notification
+if (typeof chrome !== 'undefined' && chrome.notifications?.onClicked) {
+  chrome.notifications.onClicked.addListener(() => {
+    chrome.windows.getCurrent((win) => {
+      if (win?.id) {
+        chrome.windows.update(win.id, { focused: true });
+      }
+    });
+  });
+}

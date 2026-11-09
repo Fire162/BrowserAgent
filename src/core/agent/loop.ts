@@ -2,6 +2,7 @@ import { AllSettings, ChatMessage, ToolCall } from '../llm/types';
 import { executeLLMCall } from '../llm/client';
 import { AGENT_TOOLS } from './tools';
 import { SYSTEM_PROMPT } from './prompts';
+import { triggerNotification } from '../utils/notifications';
 
 export interface TargetTabInfo {
   id: number;
@@ -23,6 +24,11 @@ export interface StepRecord {
   cachedTokens?: number;
 }
 
+export interface BudgetLimitDecision {
+  action: 'extend' | 'conclude';
+  newBudgetUSD?: number;
+}
+
 export interface AgentRunCallbacks {
   onStepStart?: (stepNumber: number) => void;
   onStepComplete?: (step: StepRecord) => void;
@@ -30,6 +36,7 @@ export interface AgentRunCallbacks {
   onFinish?: (summary: string) => void;
   onError?: (error: Error) => void;
   onAskUser?: (question: string) => Promise<string>;
+  onBudgetLimitReached?: (currentSpentUSD: number, currentCapUSD: number) => Promise<BudgetLimitDecision>;
   onCostUpdate?: (costUSD: number, totalTokens: number, cachedTokens?: number) => void;
   onTargetTabChanged?: (tabInfo: TargetTabInfo) => void;
 }
@@ -424,32 +431,47 @@ export class AgentExecution {
           return closedMsg;
         }
 
-        // Budget check: If budget cap is set and exceeded, pause and ask user
+        // Budget check: If budget cap is set and exceeded, pause and request budget adjustment
         if (maxBudgetUSD > 0 && this.accumulatedCostUSD >= maxBudgetUSD) {
-          this.callbacks.onLog?.(`Budget limit reached ($${maxBudgetUSD.toFixed(2)}). Asking for approval...`);
-          
-          const budgetPrompt = `Budget cap of $${maxBudgetUSD.toFixed(2)} reached (Current spend: $${this.accumulatedCostUSD.toFixed(4)}). Would you like to add more budget and proceed, or conclude the task?`;
-          let userResponse = 'continue';
+          this.callbacks.onLog?.(`Budget limit reached ($${maxBudgetUSD.toFixed(2)}). Awaiting new budget decision...`);
 
-          if (this.callbacks.onAskUser) {
-            userResponse = await this.callbacks.onAskUser(budgetPrompt);
+          // Trigger high-priority OS notification and audio chime
+          triggerNotification(
+            'BrowserAgent Budget Limit Reached',
+            `Reached spending limit of $${maxBudgetUSD.toFixed(2)} (Spent: $${this.accumulatedCostUSD.toFixed(4)}). Configure your new budget in the Side Panel.`
+          );
+
+          let decision: BudgetLimitDecision = { action: 'extend', newBudgetUSD: maxBudgetUSD + 0.25 };
+          if (this.callbacks.onBudgetLimitReached) {
+            decision = await this.callbacks.onBudgetLimitReached(this.accumulatedCostUSD, maxBudgetUSD);
+          } else if (this.callbacks.onAskUser) {
+            const userResponse = await this.callbacks.onAskUser(
+              `Budget cap of $${maxBudgetUSD.toFixed(2)} reached (Current spend: $${this.accumulatedCostUSD.toFixed(4)}). Enter new budget or stop.`
+            );
+            if (userResponse.toLowerCase().includes('stop') || userResponse.toLowerCase().includes('conclude')) {
+              decision = { action: 'conclude' };
+            }
           }
 
           if (this.aborted || this.paused) {
             await this.clearBadges(tabId);
-            return 'Execution stopped by user.';
+            return this.aborted ? 'Execution stopped by user.' : 'Execution paused.';
           }
 
-          const lower = userResponse.toLowerCase();
-          if (lower.includes('stop') || lower.includes('cancel') || lower.includes('finish') || lower.includes('conclude')) {
+          if (decision.action === 'conclude') {
             await this.clearBadges(tabId);
-            const budgetStopMsg = `Task concluded at budget limit of $${maxBudgetUSD.toFixed(2)} (Spent: $${this.accumulatedCostUSD.toFixed(4)}).`;
+            const budgetStopMsg = `Task concluded at budget limit of $${maxBudgetUSD.toFixed(2)} (Total Spent: $${this.accumulatedCostUSD.toFixed(4)}).`;
             this.callbacks.onFinish?.(budgetStopMsg);
             return budgetStopMsg;
           }
 
-          maxBudgetUSD += 0.25;
-          this.callbacks.onLog?.(`Budget extended to $${maxBudgetUSD.toFixed(2)}. Resuming...`);
+          const targetBudget =
+            decision.newBudgetUSD && decision.newBudgetUSD > this.accumulatedCostUSD
+              ? decision.newBudgetUSD
+              : Math.max(maxBudgetUSD + 0.25, Math.ceil(this.accumulatedCostUSD * 10) / 10 + 0.25);
+
+          maxBudgetUSD = targetBudget;
+          this.callbacks.onLog?.(`Budget extended to $${maxBudgetUSD.toFixed(2)}. Resuming task...`);
         }
 
         this.callbacks.onStepStart?.(this.stepCounter);
@@ -500,7 +522,7 @@ CRITICAL DIRECTIVE:
           prioritySteeringPrompt = `[ACTIVE USER STEERING DIRECTIVE]: "${this.lastSteeringInstruction}" (Remember to prioritize this guidance above all else).\n\n`;
         }
 
-        // Action Failure & Anti-Repetition Alert Block
+        // Action Failure & Anti-Repetition Alert Block with Skip vs. Ask Decision Matrix
         let failureAlertBlock = '';
         if (this.consecutiveFailures > 0 && this.lastFailedAction) {
           failureAlertBlock = `\
@@ -508,16 +530,17 @@ CRITICAL DIRECTIVE:
 Your previous action "${this.lastFailedAction.toolName}" failed with:
 "${this.lastFailedAction.resultStr.slice(0, 350)}"
 
-STRICT REQUIREMENT:
-- DO NOT repeat the exact same tool call with the same arguments. Repeating it will fail again.
-- You must change your approach:
-  1. Inspect the updated element badges below (IDs change after page interactions or reloads).
-  2. Use "read_page_content" to read the text of the page.
-  3. Try an alternative selector, parent container, or keypress.
-  4. If you cannot proceed, call "ask_user" to ask the user for help.\n\n`;
+STRICT REQUIREMENT - DECISION MATRIX:
+1. NEVER repeat the exact same tool call with identical arguments. Repeating it will fail again.
+2. Evaluate importance of this failed step:
+   - If OPTIONAL or NON-ESSENTIAL (e.g., cookie popup, marketing overlay, optional form field, cosmetic element):
+     -> SKIP IT! State in your thought that you are skipping this non-critical step, and proceed with the remaining task.
+   - If CRITICAL to completing the goal (e.g., login, CAPTCHA, 2FA, primary submit button, missing required info):
+     -> DO NOT loop or guess! Call "ask_user" immediately and clearly explain what assistance you need.
+   - Otherwise, switch strategies: inspect the updated element IDs below, use "read_page_content", scroll, or use a specific selector.\n\n`;
 
           if (this.consecutiveFailures >= 3) {
-            failureAlertBlock += `🚨 HIGH REPETITION FAILURE ALERT: You have encountered ${this.consecutiveFailures} consecutive failures. If you cannot find an alternative, you MUST call "ask_user" now.\n\n`;
+            failureAlertBlock += `🚨 HIGH REPETITION FAILURE ALERT: You have encountered ${this.consecutiveFailures} consecutive failures. If this action cannot be skipped, you MUST call "ask_user" now.\n\n`;
           }
         }
 
@@ -701,6 +724,9 @@ What is your next action?`;
             stepRecord.resultMessage = `Waiting for user: "${question}"`;
             this.callbacks.onStepComplete?.(stepRecord);
             this.callbacks.onLog?.('Awaiting your input...');
+
+            // Notify user with OS desktop notification & audio chime!
+            triggerNotification('BrowserAgent Needs Your Input', question);
 
             let userReply = 'Confirmed. Please proceed.';
             if (this.callbacks.onAskUser) {
