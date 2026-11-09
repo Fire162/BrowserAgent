@@ -197,7 +197,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
     const totalStepsCount = turns.reduce((acc, t) => acc + t.steps.length, 0);
 
     const fullSessionData = {
-      version: '1.1.8',
+      version: '1.1.9',
       exportTimestamp: new Date().toISOString(),
       session: {
         provider: activeProvider,
@@ -225,6 +225,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
         timestamp: new Date(turn.timestamp).toISOString(),
         status: turn.status,
         userPrompt: turn.userPrompt,
+        steeringMessages: turn.steeringMessages || [],
         resultSummary: turn.resultSummary,
         steps: turn.steps.map((s) => ({
           stepNumber: s.stepNumber,
@@ -277,7 +278,14 @@ export const ChatView: React.FC<ChatViewProps> = ({
     turns.forEach((turn, tIdx) => {
       md += `## Turn ${tIdx + 1}: ${turn.userPrompt}\n\n`;
       md += `- **Started:** \`${new Date(turn.timestamp).toISOString()}\`\n`;
-      md += `- **Status:** \`${turn.status}\`\n\n`;
+      md += `- **Status:** \`${turn.status}\`\n`;
+      if (turn.steeringMessages && turn.steeringMessages.length > 0) {
+        md += `- **Priority Steering Directives:**\n`;
+        turn.steeringMessages.forEach((g) => {
+          md += `  - ⚡ *"${g}"*\n`;
+        });
+      }
+      md += `\n`;
 
       if (turn.steps.length > 0) {
         md += `### Execution Steps (${turn.steps.length})\n\n`;
@@ -466,6 +474,26 @@ export const ChatView: React.FC<ChatViewProps> = ({
                   <p className="font-sans font-medium whitespace-pre-wrap">{turn.userPrompt}</p>
                 </div>
               </div>
+
+              {/* Priority Steering Messages for this turn */}
+              {turn.steeringMessages && turn.steeringMessages.length > 0 && (
+                <div className="space-y-1.5 pl-1">
+                  {turn.steeringMessages.map((guidance, gIdx) => (
+                    <div
+                      key={gIdx}
+                      className="flex items-start gap-2 p-2 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs shadow-sm max-w-[90%]"
+                    >
+                      <Sparkles className="h-3.5 w-3.5 text-amber-400 shrink-0 mt-0.5" />
+                      <div>
+                        <span className="font-semibold text-amber-300 text-[10px] uppercase tracking-wide block">
+                          Priority Steering Applied:
+                        </span>
+                        <span className="text-amber-100">{guidance}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
 
               {/* 2. Action Steps Timeline for this specific turn */}
               {turn.steps.length > 0 && (

@@ -34,11 +34,49 @@ export interface AgentRunCallbacks {
   onTargetTabChanged?: (tabInfo: TargetTabInfo) => void;
 }
 
+export interface ActionRecord {
+  toolName: string;
+  argsKey: string;
+  stepNumber: number;
+  resultStr: string;
+  failed: boolean;
+}
+
+function getToolCallKey(toolName: string, args: Record<string, any>): string {
+  const keys = Object.keys(args || {}).sort();
+  const sortedArgs: Record<string, any> = {};
+  for (const k of keys) {
+    if (args[k] !== undefined && args[k] !== null && String(args[k]).trim() !== '') {
+      sortedArgs[k] = args[k];
+    }
+  }
+  return `${toolName}::${JSON.stringify(sortedArgs)}`;
+}
+
+function isToolResultFailed(resultStr: string): boolean {
+  const lower = resultStr.toLowerCase();
+  return (
+    lower.includes('failed') ||
+    lower.includes('could not find') ||
+    lower.includes('cannot scroll') ||
+    lower.includes('blocked') ||
+    lower.includes('error') ||
+    lower.includes('does not exist') ||
+    lower.includes('unable to') ||
+    lower.includes('invalid')
+  );
+}
+
 export class AgentExecution {
   private aborted = false;
   private paused = false;
   private completed = false;
   private steeringQueue: string[] = [];
+  private lastSteeringInstruction?: string;
+  private sleepResolve?: () => void;
+  private actionHistory: ActionRecord[] = [];
+  private consecutiveFailures = 0;
+  private lastFailedAction?: { toolName: string; argsKey: string; resultStr: string };
   private messages: ChatMessage[] = [];
   private stepCounter = 1;
   private accumulatedCostUSD = 0;
@@ -96,8 +134,14 @@ export class AgentExecution {
 
   public addSteeringMessage(msg: string): void {
     if (msg.trim()) {
-      this.steeringQueue.push(msg.trim());
-      this.callbacks.onLog?.(`Steering queued: "${msg.trim().slice(0, 30)}..."`);
+      const trimmed = msg.trim();
+      this.steeringQueue.push(trimmed);
+      this.lastSteeringInstruction = trimmed;
+      this.callbacks.onLog?.(`⚡ Priority steering queued: "${trimmed.slice(0, 30)}..."`);
+      if (this.sleepResolve) {
+        this.callbacks.onLog?.('⚡ Interrupting wait to apply live steering immediately...');
+        this.sleepResolve();
+      }
     }
   }
 
@@ -277,8 +321,10 @@ export class AgentExecution {
         const url = urlMatch ? urlMatch[1] : '';
         const title = titleMatch ? titleMatch[1] : '';
 
-        const guidanceMatch = msg.content.match(/\[USER REAL-TIME GUIDANCE \/ STEERING MESSAGE\]:\n"([^"]+)"/);
-        const guidanceText = guidanceMatch ? `\n[Steering Applied]: "${guidanceMatch[1]}"` : '';
+        const guidanceMatch =
+          msg.content.match(/USER LIVE STEERING INSTRUCTION[\s\S]*?\n([^\n═║╚]+)\n[═║╚]/) ||
+          msg.content.match(/\[USER REAL-TIME GUIDANCE \/ STEERING MESSAGE\]:\n"([^"]+)"/);
+        const guidanceText = guidanceMatch ? `\n[Priority Steering Applied]: "${guidanceMatch[1].trim()}"` : '';
 
         msg.content = `[HISTORICAL STEP OBSERVATION]\nPage: ${title} (${url})${guidanceText}\n(DOM elements list omitted from history to conserve tokens; live elements provided in latest observation)`;
       }
@@ -286,13 +332,28 @@ export class AgentExecution {
   }
 
   private sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+    return new Promise((resolve) => {
+      let timer: any = null;
+      const onWake = () => {
+        if (timer) clearTimeout(timer);
+        this.sleepResolve = undefined;
+        resolve();
+      };
+      this.sleepResolve = onWake;
+      timer = setTimeout(onWake, ms);
+    });
   }
 
   public async run(followUpInstruction?: string): Promise<string> {
     this.aborted = false;
     this.paused = false;
     this.abortController = new AbortController();
+
+    if (followUpInstruction) {
+      this.consecutiveFailures = 0;
+      this.lastFailedAction = undefined;
+      this.lastSteeringInstruction = undefined;
+    }
 
     // 1. Lock Target Tab ID so user can multi-task on other tabs without disruption
     if (!this.targetTabId) {
@@ -414,7 +475,53 @@ export class AgentExecution {
           elementsList = (cutIdx > 0 ? elementsList.slice(0, cutIdx) : elementsList.slice(0, 6000)) + '\n... [Remaining elements truncated; scroll to view more]';
         }
 
-        let observationContent = `[CURRENT PAGE OBSERVATION]
+        // Priority Steering Block (placed at the VERY TOP of the message)
+        let prioritySteeringPrompt = '';
+        if (this.steeringQueue.length > 0) {
+          const guidanceList = this.steeringQueue.splice(0, this.steeringQueue.length);
+          const guidance = guidanceList.join('\n');
+          this.lastSteeringInstruction = guidance;
+
+          prioritySteeringPrompt = `\
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ 🚨 HIGHEST PRIORITY OVERRIDE: USER LIVE STEERING INSTRUCTION                 ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+${guidance}
+╚══════════════════════════════════════════════════════════════════════════════╝
+CRITICAL DIRECTIVE:
+1. The user has intervened live with the instruction above.
+2. This user steering OVERRIDES your previous plan, assumptions, and goal sub-tasks.
+3. Your VERY NEXT ACTION must directly satisfy this instruction.
+4. DO NOT ignore or postpone this instruction. Do not repeat what you were doing previously if it contradicts this guidance.
+
+`;
+          this.callbacks.onLog?.(`⚡ Applying priority steering: "${guidance.slice(0, 40)}..."`);
+        } else if (this.lastSteeringInstruction) {
+          prioritySteeringPrompt = `[ACTIVE USER STEERING DIRECTIVE]: "${this.lastSteeringInstruction}" (Remember to prioritize this guidance above all else).\n\n`;
+        }
+
+        // Action Failure & Anti-Repetition Alert Block
+        let failureAlertBlock = '';
+        if (this.consecutiveFailures > 0 && this.lastFailedAction) {
+          failureAlertBlock = `\
+⚠️ ACTION FAILURE ALERT (${this.consecutiveFailures} consecutive failed attempt${this.consecutiveFailures > 1 ? 's' : ''}):
+Your previous action "${this.lastFailedAction.toolName}" failed with:
+"${this.lastFailedAction.resultStr.slice(0, 350)}"
+
+STRICT REQUIREMENT:
+- DO NOT repeat the exact same tool call with the same arguments. Repeating it will fail again.
+- You must change your approach:
+  1. Inspect the updated element badges below (IDs change after page interactions or reloads).
+  2. Use "read_page_content" to read the text of the page.
+  3. Try an alternative selector, parent container, or keypress.
+  4. If you cannot proceed, call "ask_user" to ask the user for help.\n\n`;
+
+          if (this.consecutiveFailures >= 3) {
+            failureAlertBlock += `🚨 HIGH REPETITION FAILURE ALERT: You have encountered ${this.consecutiveFailures} consecutive failures. If you cannot find an alternative, you MUST call "ask_user" now.\n\n`;
+          }
+        }
+
+        let observationContent = `${prioritySteeringPrompt}${failureAlertBlock}[CURRENT PAGE OBSERVATION]
 Tab ID: ${tabId}
 URL: ${snapshot.url}
 Title: ${snapshot.title}
@@ -428,13 +535,6 @@ What is your next action?`;
           currentObservationImageUrl = this.pendingScreenshotUrl;
           observationContent += `\n\n[SCREENSHOT IMAGE ATTACHED]: A visual screenshot of the assigned tab's visible viewport is attached to this message for your visual analysis.`;
           this.pendingScreenshotUrl = undefined;
-        }
-
-        // Check if user submitted mid-flight steering message
-        if (this.steeringQueue.length > 0) {
-          const guidance = this.steeringQueue.splice(0, this.steeringQueue.length).join('\n');
-          observationContent += `\n\n[USER REAL-TIME GUIDANCE / STEERING MESSAGE]:\n"${guidance}"\nCRITICAL: You must incorporate this user instruction immediately for your next action.`;
-          this.callbacks.onLog?.(`Applied user guidance: "${guidance.slice(0, 30)}..."`);
         }
 
         this.messages.push({
@@ -523,25 +623,57 @@ What is your next action?`;
         for (let i = 0; i < toolCalls.length; i++) {
           const currentTool = toolCalls[i];
           const toolCallId = currentTool.id || `call_${this.stepCounter}_${i}`;
+          const currentArgsKey = getToolCallKey(currentTool.name, currentTool.arguments);
 
           if (this.aborted || this.paused) {
             await this.clearBadges(tabId);
             return this.aborted ? 'Execution stopped by user.' : 'Execution paused.';
           }
 
+          // Circuit Breaker: Prevent repeating the exact same failed action over and over
+          const priorFailuresOfThisAction = this.actionHistory.filter(
+            (h) => h.argsKey === currentArgsKey && h.failed
+          );
+
+          if (priorFailuresOfThisAction.length >= 2) {
+            const circuitBreakerMsg = `[CIRCUIT BREAKER: REPEATED FAILURE BLOCKED]: You have already attempted "${currentTool.name}" with identical parameters ${priorFailuresOfThisAction.length} times, and it failed every time. Repeating this exact action is blocked to avoid an infinite loop. You MUST change your strategy (inspect updated badges, use read_page_content, scroll, or call ask_user).`;
+            this.callbacks.onLog?.(`🛑 Blocked repeated failed action: ${currentTool.name}`);
+            executedResults.push({
+              id: toolCallId,
+              name: currentTool.name,
+              resultStr: circuitBreakerMsg,
+            });
+            this.consecutiveFailures++;
+            this.lastFailedAction = {
+              toolName: currentTool.name,
+              argsKey: currentArgsKey,
+              resultStr: circuitBreakerMsg,
+            };
+            this.actionHistory.push({
+              toolName: currentTool.name,
+              argsKey: currentArgsKey,
+              stepNumber: this.stepCounter,
+              resultStr: circuitBreakerMsg,
+              failed: true,
+            });
+            continue;
+          }
+
+          let resultStr = '';
+          let resultImageUrl: string | undefined = undefined;
+
           if (currentTool.name === 'finish') {
             const explicitSummary = currentTool.arguments.summary?.trim();
             finishSummary = explicitSummary || 'Task completed successfully.';
             shouldFinish = true;
+            resultStr = 'Task completed.';
             executedResults.push({
               id: toolCallId,
               name: 'finish',
-              resultStr: 'Task completed.',
+              resultStr,
             });
             break;
-          }
-
-          if (currentTool.name === 'take_screenshot') {
+          } else if (currentTool.name === 'take_screenshot') {
             this.callbacks.onLog?.('Capturing tab screenshot...');
             const shotRes = await new Promise<any>((resolve) => {
               chrome.runtime.sendMessage({ action: 'capture_screenshot', params: { tabId } }, (res) => {
@@ -552,19 +684,18 @@ What is your next action?`;
             if (shotRes?.success && shotRes?.dataUrl) {
               stepRecord.screenshotUrl = shotRes.dataUrl;
               this.pendingScreenshotUrl = shotRes.dataUrl;
-              executedResults.push({
-                id: toolCallId,
-                name: 'take_screenshot',
-                resultStr: 'Screenshot captured successfully. Visual screenshot image is provided directly to you in the observation.',
-                imageUrl: shotRes.dataUrl,
-              });
+              resultImageUrl = shotRes.dataUrl;
+              resultStr = 'Screenshot captured successfully. Visual screenshot image is provided directly to you in the observation.';
             } else {
-              executedResults.push({
-                id: toolCallId,
-                name: 'take_screenshot',
-                resultStr: `Screenshot capture failed: ${shotRes?.error || 'Unknown error'}`,
-              });
+              resultStr = `Screenshot capture failed: ${shotRes?.error || 'Unknown error'}`;
             }
+
+            executedResults.push({
+              id: toolCallId,
+              name: 'take_screenshot',
+              resultStr,
+              imageUrl: resultImageUrl,
+            });
           } else if (currentTool.name === 'ask_user') {
             const question = currentTool.arguments.question || 'Clarification needed from user.';
             stepRecord.resultMessage = `Waiting for user: "${question}"`;
@@ -581,19 +712,21 @@ What is your next action?`;
               return this.aborted ? 'Execution stopped by user.' : 'Execution paused.';
             }
 
+            resultStr = `User responded: "${userReply}". Please proceed with the next step.`;
             executedResults.push({
               id: toolCallId,
               name: 'ask_user',
-              resultStr: `User responded: "${userReply}". Please proceed with the next step.`,
+              resultStr,
             });
           } else if (currentTool.name === 'wait') {
             const secs = Math.min(10, Math.max(1, parseInt(currentTool.arguments.seconds || '2', 10)));
             this.callbacks.onLog?.(`Waiting ${secs}s...`);
             await this.sleep(secs * 1000);
+            resultStr = `Waited for ${secs} seconds.`;
             executedResults.push({
               id: toolCallId,
               name: 'wait',
-              resultStr: `Waited for ${secs} seconds.`,
+              resultStr,
             });
           } else if (currentTool.name === 'navigate') {
             const url = currentTool.arguments.url;
@@ -605,18 +738,15 @@ What is your next action?`;
             });
 
             if (navRes && !navRes.success) {
-              executedResults.push({
-                id: toolCallId,
-                name: 'navigate',
-                resultStr: navRes.error || `Failed to navigate to ${url}: Site does not exist or could not be loaded.`,
-              });
+              resultStr = navRes.error || `Failed to navigate to ${url}: Site does not exist or could not be loaded.`;
             } else {
-              executedResults.push({
-                id: toolCallId,
-                name: 'navigate',
-                resultStr: `Navigated to ${url}.`,
-              });
+              resultStr = `Navigated to ${url}.`;
             }
+            executedResults.push({
+              id: toolCallId,
+              name: 'navigate',
+              resultStr,
+            });
           } else {
             if (currentTool.name === 'read_page_content') {
               this.callbacks.onLog?.('Reading page DOM text...');
@@ -624,16 +754,38 @@ What is your next action?`;
               this.callbacks.onLog?.(`Reading element #${currentTool.arguments.elementId || currentTool.arguments.selector}...`);
             }
             const domRes = await this.executeDOMAction(tabId, currentTool.name, currentTool.arguments);
+            resultStr = domRes.message || JSON.stringify(domRes);
             executedResults.push({
               id: toolCallId,
               name: currentTool.name,
-              resultStr: domRes.message || JSON.stringify(domRes),
+              resultStr,
             });
+          }
+
+          const actionFailed = isToolResultFailed(resultStr);
+          this.actionHistory.push({
+            toolName: currentTool.name,
+            argsKey: currentArgsKey,
+            stepNumber: this.stepCounter,
+            resultStr,
+            failed: actionFailed,
+          });
+
+          if (actionFailed) {
+            this.consecutiveFailures++;
+            this.lastFailedAction = {
+              toolName: currentTool.name,
+              argsKey: currentArgsKey,
+              resultStr,
+            };
+          } else {
+            this.consecutiveFailures = 0;
+            this.lastFailedAction = undefined;
           }
         }
 
         const combinedResultStr = executedResults.map((r) => `[${r.name}] ${r.resultStr}`).join('\n');
-        stepRecord.status = executedResults.some((r) => r.resultStr.includes('failed') || r.resultStr.includes('Could not find')) ? 'failed' : 'success';
+        stepRecord.status = executedResults.some((r) => isToolResultFailed(r.resultStr)) ? 'failed' : 'success';
         stepRecord.resultMessage = combinedResultStr;
         this.recordedSteps.push(stepRecord);
         this.callbacks.onStepComplete?.(stepRecord);

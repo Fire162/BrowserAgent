@@ -15,6 +15,7 @@ export interface ChatTurn {
   steps: StepRecord[];
   resultSummary?: string | null;
   status: 'running' | 'completed' | 'failed' | 'paused';
+  steeringMessages?: string[];
 }
 
 export const App: React.FC = () => {
@@ -414,6 +415,18 @@ export const App: React.FC = () => {
   const handleSendSteering = (guidance: string) => {
     if (activeExecutionRef.current) {
       activeExecutionRef.current.addSteeringMessage(guidance);
+      setTurns((prev) => {
+        if (prev.length === 0) return prev;
+        const lastIdx = prev.length - 1;
+        const currentTurn = prev[lastIdx];
+        const existing = currentTurn.steeringMessages || [];
+        const nextTurns = [...prev];
+        nextTurns[lastIdx] = {
+          ...currentTurn,
+          steeringMessages: [...existing, guidance],
+        };
+        return nextTurns;
+      });
     }
   };
 

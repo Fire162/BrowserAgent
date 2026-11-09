@@ -1,6 +1,9 @@
 node_modules/
 dist/
 *.zip
+*.log
+browseragent-*.json
+browseragent-*.md
 .DS_Store
 .env
 .env.*

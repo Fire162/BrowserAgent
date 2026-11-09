@@ -54,7 +54,10 @@ function flashElement(el: HTMLElement): void {
 export function performClick(params: { elementId?: string | number; selector?: string }): { success: boolean; message: string } {
   const el = findTargetElement(params.elementId, params.selector);
   if (!el) {
-    return { success: false, message: `Could not find element to click (id: ${params.elementId}, selector: ${params.selector})` };
+    return {
+      success: false,
+      message: `Could not find element to click (id: ${params.elementId}, selector: ${params.selector}). Note: Element IDs change when the DOM updates. Re-check current element badges or try a CSS selector.`,
+    };
   }
 
   flashElement(el);
@@ -97,7 +100,10 @@ export function performType(params: {
 }): { success: boolean; message: string } {
   const el = findTargetElement(params.elementId, params.selector);
   if (!el) {
-    return { success: false, message: `Could not find element to type into (id: ${params.elementId}, selector: ${params.selector})` };
+    return {
+      success: false,
+      message: `Could not find element to type into (id: ${params.elementId}, selector: ${params.selector}). Note: Element IDs change when the DOM updates. Re-check current element badges or try a CSS selector.`,
+    };
   }
 
   flashElement(el);
@@ -271,9 +277,18 @@ export function performScroll(direction: 'down' | 'up', amount = 500): { success
     if (scrollables.length > 0) {
       scrollables.sort((a, b) => b.clientWidth * b.clientHeight - a.clientWidth * a.clientHeight);
       const targetContainer = scrollables[0];
+      const containerBeforeY = targetContainer.scrollTop;
       targetContainer.scrollTop += delta;
-      return { success: true, message: `Scrolled container <${targetContainer.tagName.toLowerCase()}> ${direction} by ${amount}px` };
+      const containerAfterY = targetContainer.scrollTop;
+      if (Math.abs(containerAfterY - containerBeforeY) >= 5) {
+        return { success: true, message: `Scrolled container <${targetContainer.tagName.toLowerCase()}> ${direction} by ${amount}px` };
+      }
     }
+
+    return {
+      success: false,
+      message: `Page or container cannot scroll ${direction} further (already at boundary or content is not scrollable). Do not scroll ${direction} again; inspect visible elements or navigate.`,
+    };
   }
 
   return { success: true, message: `Scrolled ${direction} by ${amount}px` };
