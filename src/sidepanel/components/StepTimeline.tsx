@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ChevronDown, ChevronRight, CheckCircle2, AlertCircle, Loader2, Image as ImageIcon, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, CheckCircle2, AlertCircle, Loader2, Image as ImageIcon, X, Sparkles } from 'lucide-react';
 import { StepRecord } from '../../core/agent/loop';
 import { MarkdownViewer } from './MarkdownViewer';
 
@@ -77,6 +77,15 @@ export const StepTimeline: React.FC<StepTimelineProps> = ({ steps, isRunning = f
                 </div>
 
                 <div className="flex items-center gap-1.5 ml-2 shrink-0">
+                  {step.steeringApplied && (
+                    <span
+                      title={`Priority Steering Applied: "${step.steeringApplied}"`}
+                      className="text-[9px] text-amber-300 font-medium flex items-center gap-0.5 bg-amber-500/15 px-1.5 py-0.5 rounded border border-amber-500/30 shrink-0"
+                    >
+                      <Sparkles className="h-2.5 w-2.5 text-amber-400" />
+                      <span>Steering</span>
+                    </span>
+                  )}
                   {step.screenshotUrl && (
                     <span className="text-[10px] text-sky-400 flex items-center gap-0.5 bg-sky-500/10 px-1 py-0.5 rounded border border-sky-500/20">
                       <ImageIcon className="h-3 w-3" />
@@ -96,6 +105,18 @@ export const StepTimeline: React.FC<StepTimelineProps> = ({ steps, isRunning = f
 
               {isExpanded && (
                 <div className="px-3 pb-2.5 pt-1 border-t border-slate-800/80 space-y-2 bg-slate-950/40 text-[11px]">
+                  {step.steeringApplied && (
+                    <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-200">
+                      <div className="flex items-center gap-1 text-[10px] font-bold text-amber-400 uppercase tracking-wide">
+                        <Sparkles className="h-3 w-3" />
+                        <span>Live Steering Applied to this Step:</span>
+                      </div>
+                      <div className="mt-0.5 text-xs text-amber-100 font-medium whitespace-pre-wrap">
+                        "{step.steeringApplied}"
+                      </div>
+                    </div>
+                  )}
+
                   {step.thought && (
                     <div>
                       <span className="font-semibold text-slate-400 block mb-0.5">Reasoning:</span>

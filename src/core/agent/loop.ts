@@ -22,6 +22,7 @@ export interface StepRecord {
   costUSD?: number;
   screenshotUrl?: string;
   cachedTokens?: number;
+  steeringApplied?: string;
 }
 
 export interface BudgetLimitDecision {
@@ -84,6 +85,7 @@ export class AgentExecution {
   private actionHistory: ActionRecord[] = [];
   private consecutiveFailures = 0;
   private lastFailedAction?: { toolName: string; argsKey: string; resultStr: string };
+  private activeSteeringForStep?: string;
   private messages: ChatMessage[] = [];
   private stepCounter = 1;
   private accumulatedCostUSD = 0;
@@ -503,6 +505,7 @@ export class AgentExecution {
           const guidanceList = this.steeringQueue.splice(0, this.steeringQueue.length);
           const guidance = guidanceList.join('\n');
           this.lastSteeringInstruction = guidance;
+          this.activeSteeringForStep = guidance;
 
           prioritySteeringPrompt = `\
 ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -614,7 +617,9 @@ What is your next action?`;
             resultMessage: 'Agent reflected without dispatching a tool.',
             costUSD: response.estimatedCostUSD,
             cachedTokens: response.usage?.cachedTokens,
+            steeringApplied: this.activeSteeringForStep,
           };
+          this.activeSteeringForStep = undefined;
           this.recordedSteps.push(stepRecord);
           this.callbacks.onStepComplete?.(stepRecord);
 
@@ -637,7 +642,9 @@ What is your next action?`;
           status: 'running',
           costUSD: response.estimatedCostUSD,
           cachedTokens: response.usage?.cachedTokens,
+          steeringApplied: this.activeSteeringForStep,
         };
+        this.activeSteeringForStep = undefined;
 
         const executedResults: { id: string; name: string; resultStr: string; imageUrl?: string }[] = [];
         let shouldFinish = false;

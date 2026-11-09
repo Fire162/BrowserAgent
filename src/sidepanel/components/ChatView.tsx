@@ -203,7 +203,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
     const totalStepsCount = turns.reduce((acc, t) => acc + t.steps.length, 0);
 
     const fullSessionData = {
-      version: '1.2.0',
+      version: '1.2.1',
       exportTimestamp: new Date().toISOString(),
       session: {
         provider: activeProvider,
@@ -481,21 +481,20 @@ export const ChatView: React.FC<ChatViewProps> = ({
                 </div>
               </div>
 
-              {/* Priority Steering Messages for this turn */}
+              {/* Priority Steering Messages for this turn (Rendered as user message bubbles like follow-ups) */}
               {turn.steeringMessages && turn.steeringMessages.length > 0 && (
-                <div className="space-y-1.5 pl-1">
+                <div className="space-y-2 flex flex-col items-end">
                   {turn.steeringMessages.map((guidance, gIdx) => (
                     <div
                       key={gIdx}
-                      className="flex items-start gap-2 p-2 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs shadow-sm max-w-[90%]"
+                      className="bg-amber-600/20 border border-amber-500/40 rounded-2xl rounded-tr-sm px-3.5 py-2 text-xs text-white max-w-[85%] leading-relaxed shadow-sm animate-fade-in"
                     >
-                      <Sparkles className="h-3.5 w-3.5 text-amber-400 shrink-0 mt-0.5" />
-                      <div>
-                        <span className="font-semibold text-amber-300 text-[10px] uppercase tracking-wide block">
-                          Priority Steering Applied:
-                        </span>
-                        <span className="text-amber-100">{guidance}</span>
+                      <div className="flex items-center gap-1.5 text-[10px] font-semibold text-amber-400 mb-0.5">
+                        <User className="h-3 w-3" />
+                        <span>Live Steering Follow-up</span>
+                        <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
                       </div>
+                      <p className="font-sans font-medium whitespace-pre-wrap">{guidance}</p>
                     </div>
                   ))}
                 </div>

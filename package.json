@@ -1,6 +1,6 @@
 {
   "name": "browseragent",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Autonomous In-Browser AI Agent Extension (BYOK: OpenRouter, Gemini, Claude, Grok, DeepSeek, OpenAI)",
   "type": "module",
   "scripts": {
