@@ -64,27 +64,107 @@ function generateSelector(el: HTMLElement): string {
   return path;
 }
 
+/**
+ * Recursively traverses all elements in the document and penetrates open Shadow DOM roots
+ */
+function getAllElementsDeep(root: ParentNode = document): HTMLElement[] {
+  const elements: HTMLElement[] = [];
+  const treeWalker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, {
+    acceptNode(node) {
+      if ((node as HTMLElement).id === BADGE_CONTAINER_ID) {
+        return NodeFilter.FILTER_REJECT;
+      }
+      return NodeFilter.FILTER_ACCEPT;
+    },
+  });
+
+  let current = treeWalker.nextNode() as HTMLElement | null;
+  while (current) {
+    elements.push(current);
+
+    // Deeply penetrate open Shadow DOM roots (e.g. Microsoft Partner Center <v6_he-text-area>)
+    if (current.shadowRoot) {
+      elements.push(...getAllElementsDeep(current.shadowRoot));
+    }
+
+    current = treeWalker.nextNode() as HTMLElement | null;
+  }
+
+  return elements;
+}
+
+const INTERACTIVE_TAGS = new Set(['a', 'button', 'input', 'textarea', 'select', 'option']);
+const INTERACTIVE_ROLES = new Set([
+  'button',
+  'link',
+  'checkbox',
+  'radio',
+  'tab',
+  'menuitem',
+  'option',
+  'textbox',
+  'searchbox',
+  'combobox',
+  'switch',
+]);
+
+function isInteractiveElement(el: HTMLElement): boolean {
+  const tag = el.tagName.toLowerCase();
+
+  // 1. Standard HTML form and navigation tags
+  if (INTERACTIVE_TAGS.has(tag)) {
+    if (tag === 'a') {
+      return el.hasAttribute('href') || el.hasAttribute('role') || el.hasAttribute('tabindex');
+    }
+    return true;
+  }
+
+  // 2. ARIA roles
+  const role = el.getAttribute('role');
+  if (role && INTERACTIVE_ROLES.has(role)) {
+    return true;
+  }
+
+  // 3. Contenteditable
+  if (el.isContentEditable || el.getAttribute('contenteditable') === 'true') {
+    return true;
+  }
+
+  // 4. Custom Web Components (like <v6_he-text-area>, <custom-input>, <fluent-text-field>)
+  if (tag.includes('-')) {
+    const isCustomFormOrButton =
+      tag.includes('text') ||
+      tag.includes('input') ||
+      tag.includes('area') ||
+      tag.includes('field') ||
+      tag.includes('btn') ||
+      tag.includes('button') ||
+      tag.includes('select') ||
+      tag.includes('picker') ||
+      el.hasAttribute('aria-label') ||
+      el.hasAttribute('placeholder') ||
+      el.hasAttribute('value') ||
+      Boolean(el.shadowRoot?.querySelector('input, textarea'));
+
+    if (isCustomFormOrButton) return true;
+  }
+
+  // 5. Explicit event handlers or tabindex
+  if (
+    el.hasAttribute('onclick') ||
+    (el.hasAttribute('tabindex') && el.getAttribute('tabindex') !== '-1')
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 export function scanAndLabelElements(showVisualBadges = true): { elements: ElementDescriptor[]; snapshotText: string } {
   clearBadges();
 
-  const interactiveSelectors = [
-    'a[href]',
-    'button',
-    'input',
-    'textarea',
-    'select',
-    '[role="button"]',
-    '[role="link"]',
-    '[role="checkbox"]',
-    '[role="radio"]',
-    '[role="tab"]',
-    '[role="menuitem"]',
-    '[contenteditable="true"]',
-    '[onclick]',
-    '[tabindex]:not([tabindex="-1"])',
-  ].join(',');
-
-  const rawElements = Array.from(document.querySelectorAll<HTMLElement>(interactiveSelectors));
+  const allElements = getAllElementsDeep(document);
+  const rawElements = allElements.filter(isInteractiveElement);
   const visibleElements = rawElements.filter(isElementVisible);
 
   let container: HTMLDivElement | null = null;
@@ -106,14 +186,24 @@ export function scanAndLabelElements(showVisualBadges = true): { elements: Eleme
 
   for (const el of visibleElements) {
     const tagName = el.tagName.toLowerCase();
-    const isInput = ['input', 'textarea', 'select'].includes(tagName);
+    const shadowInput = el.shadowRoot?.querySelector<HTMLInputElement | HTMLTextAreaElement>('input, textarea');
+    const isInput =
+      ['input', 'textarea', 'select'].includes(tagName) ||
+      tagName.includes('text') ||
+      tagName.includes('input') ||
+      tagName.includes('area') ||
+      el.getAttribute('role') === 'textbox' ||
+      Boolean(shadowInput);
 
     const text = (
       el.innerText ||
       el.getAttribute('aria-label') ||
+      shadowInput?.getAttribute('aria-label') ||
       el.getAttribute('placeholder') ||
+      shadowInput?.getAttribute('placeholder') ||
       el.getAttribute('title') ||
       (el as HTMLInputElement).value ||
+      shadowInput?.value ||
       ''
     ).trim().replace(/\s+/g, ' ').slice(0, 50);
 
@@ -133,13 +223,13 @@ export function scanAndLabelElements(showVisualBadges = true): { elements: Eleme
       id,
       tagName,
       text,
-      type: (el as HTMLInputElement).type,
-      role: el.getAttribute('role') || undefined,
-      placeholder: el.getAttribute('placeholder') || undefined,
-      ariaLabel: el.getAttribute('aria-label') || undefined,
-      name: el.getAttribute('name') || undefined,
+      type: (el as HTMLInputElement).type || shadowInput?.type || (isInput ? 'text' : undefined),
+      role: el.getAttribute('role') || (isInput ? 'textbox' : undefined),
+      placeholder: el.getAttribute('placeholder') || shadowInput?.getAttribute('placeholder') || undefined,
+      ariaLabel: el.getAttribute('aria-label') || shadowInput?.getAttribute('aria-label') || undefined,
+      name: el.getAttribute('name') || shadowInput?.getAttribute('name') || undefined,
       href: (el as HTMLAnchorElement).href || undefined,
-      value: (el as HTMLInputElement).value || undefined,
+      value: (el as HTMLInputElement).value || shadowInput?.value || undefined,
       selector: generateSelector(el),
       rect: {
         top: Math.round(rect.top),

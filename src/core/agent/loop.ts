@@ -121,6 +121,14 @@ export class AgentExecution {
     return this.accumulatedCostUSD;
   }
 
+  public getTokens(): number {
+    return this.accumulatedTokens;
+  }
+
+  public getCachedTokens(): number {
+    return this.accumulatedCachedTokens;
+  }
+
   public getTargetTabId(): number | undefined {
     return this.targetTabId;
   }

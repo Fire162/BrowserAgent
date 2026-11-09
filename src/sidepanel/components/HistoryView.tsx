@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { History, Trash2, CheckCircle, XCircle, Clock, ArrowRight, MessageSquare, Play } from 'lucide-react';
+import { History, Trash2, CheckCircle, XCircle, Clock, ArrowRight, MessageSquare, Play, Download, FileText } from 'lucide-react';
 import { loadTasks, clearTasks, TaskRecord } from '../../core/storage/db';
 import { MarkdownViewer } from './MarkdownViewer';
 
@@ -110,6 +110,68 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onRerunTask, onResumeT
                 </div>
               </div>
             )}
+
+            <div className="flex items-center gap-2 pt-1 border-t border-slate-800/80">
+              <span className="text-[10px] text-slate-400 font-medium">Export:</span>
+              <button
+                type="button"
+                onClick={() => {
+                  let md = `# 🌐 BrowserAgent Task Export\n\n`;
+                  md += `| Metadata | Value |\n`;
+                  md += `| :--- | :--- |\n`;
+                  md += `| **Goal** | ${selectedTask.goal} |\n`;
+                  md += `| **Created** | \`${new Date(selectedTask.createdAt).toISOString()}\` |\n`;
+                  md += `| **Provider** | **${selectedTask.provider}** |\n`;
+                  md += `| **Model** | \`${selectedTask.model}\` |\n`;
+                  md += `| **Status** | \`${selectedTask.status}\` |\n`;
+                  md += `| **Steps** | \`${selectedTask.stepCount}\` |\n\n`;
+                  if (selectedTask.steps && selectedTask.steps.length > 0) {
+                    md += `## Steps (${selectedTask.steps.length})\n\n`;
+                    selectedTask.steps.forEach((s: any) => {
+                      md += `### Step ${s.stepNumber || ''}\n\n`;
+                      if (s.thought) md += `**Thought:**\n> ${s.thought.replace(/\\n/g, '\\n> ')}\n\n`;
+                      const calls = s.toolCalls || (s.toolCall ? [s.toolCall] : []);
+                      if (calls.length > 0) md += `**Action:**\n\`\`\`json\n${JSON.stringify(calls, null, 2)}\n\`\`\`\n\n`;
+                      if (s.resultMessage) md += `**Result:**\n\`\`\`\n${s.resultMessage}\n\`\`\`\n\n`;
+                    });
+                  }
+                  if (selectedTask.resultSummary) {
+                    md += `## Result Summary\n\n${selectedTask.resultSummary}\n\n`;
+                  }
+                  if (selectedTask.messages && selectedTask.messages.length > 0) {
+                    md += `## Raw Messages\n\n\`\`\`json\n${JSON.stringify(selectedTask.messages, null, 2)}\n\`\`\`\n`;
+                  }
+                  const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `browseragent-${selectedTask.id}-${Date.now()}.md`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                }}
+                className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-sky-300 text-[10px] flex items-center gap-1 border border-slate-700/60"
+              >
+                <Download className="h-2.5 w-2.5 text-sky-400" />
+                <span>Export .MD</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const blob = new Blob([JSON.stringify(selectedTask, null, 2)], { type: 'application/json;charset=utf-8' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `browseragent-${selectedTask.id}-${Date.now()}.json`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                }}
+                className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-emerald-300 text-[10px] flex items-center gap-1 border border-slate-700/60"
+              >
+                <FileText className="h-2.5 w-2.5 text-emerald-400" />
+                <span>Export .JSON</span>
+              </button>
+            </div>
 
             <div className="pt-2 flex gap-2">
               <button

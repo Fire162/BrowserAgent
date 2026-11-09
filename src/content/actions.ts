@@ -1,5 +1,28 @@
 import { getElementById } from './labeler';
 
+/**
+ * Deep query selector that penetrates open shadow roots
+ */
+function querySelectorDeep(root: ParentNode, selector: string): HTMLElement | null {
+  try {
+    const found = root.querySelector<HTMLElement>(selector);
+    if (found) return found;
+  } catch {
+    // Ignore invalid selector syntax
+  }
+
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+  let node = walker.nextNode() as HTMLElement | null;
+  while (node) {
+    if (node.shadowRoot) {
+      const inner = querySelectorDeep(node.shadowRoot, selector);
+      if (inner) return inner;
+    }
+    node = walker.nextNode() as HTMLElement | null;
+  }
+  return null;
+}
+
 function findTargetElement(elementId?: string | number, selector?: string): HTMLElement | null {
   if (elementId !== undefined && elementId !== null && String(elementId).trim() !== '') {
     const numId = parseInt(String(elementId), 10);
@@ -10,12 +33,7 @@ function findTargetElement(elementId?: string | number, selector?: string): HTML
   }
 
   if (selector && selector.trim()) {
-    try {
-      const el = document.querySelector<HTMLElement>(selector);
-      if (el) return el;
-    } catch {
-      // Ignore invalid selector
-    }
+    return querySelectorDeep(document, selector.trim());
   }
 
   return null;
@@ -46,7 +64,7 @@ export function performClick(params: { elementId?: string | number; selector?: s
     el.scrollIntoView(true);
   }
 
-  // Realistic event dispatching
+  // Realistic event dispatching with composed: true to cross shadow DOM boundaries
   const rect = el.getBoundingClientRect();
   const clientX = rect.left + rect.width / 2;
   const clientY = rect.top + rect.height / 2;
@@ -54,6 +72,7 @@ export function performClick(params: { elementId?: string | number; selector?: s
   const mouseOpts: MouseEventInit = {
     bubbles: true,
     cancelable: true,
+    composed: true,
     view: window,
     clientX,
     clientY,
@@ -87,14 +106,27 @@ export function performType(params: {
   } catch {
     el.scrollIntoView(true);
   }
-  el.focus();
 
-  const isInput = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement;
+  // If host element has a shadowRoot containing an inner input or textarea or contenteditable, delegate to it
+  let targetEl: HTMLElement = el;
+  if (el.shadowRoot) {
+    const shadowInner = el.shadowRoot.querySelector<HTMLElement>('input, textarea, [contenteditable="true"], [role="textbox"]');
+    if (shadowInner) {
+      targetEl = shadowInner;
+    }
+  }
+
+  // Focus both host and inner target
+  try { el.focus(); } catch {}
+  try { targetEl.focus(); } catch {}
+
+  const isInput = targetEl instanceof HTMLInputElement || targetEl instanceof HTMLTextAreaElement;
+  const isContentEditable = targetEl.isContentEditable || targetEl.getAttribute('contenteditable') === 'true';
   const shouldClear = params.clearFirst === 'true' || params.clearFirst === true;
   const shouldPressEnter = params.pressEnter === 'true' || params.pressEnter === true;
 
   if (isInput) {
-    const inputEl = el as HTMLInputElement | HTMLTextAreaElement;
+    const inputEl = targetEl as HTMLInputElement | HTMLTextAreaElement;
     if (shouldClear) {
       inputEl.value = '';
     }
@@ -110,23 +142,78 @@ export function performType(params: {
       inputEl.value = finalValue;
     }
 
-    inputEl.dispatchEvent(new Event('input', { bubbles: true }));
-    inputEl.dispatchEvent(new Event('change', { bubbles: true }));
-  } else if (el.isContentEditable) {
-    if (shouldClear) {
-      el.innerText = '';
+    inputEl.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: params.text, inputType: 'insertText' }));
+    inputEl.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+
+    // Also mirror to host custom component if it exposes a .value property
+    if (el !== targetEl && 'value' in (el as any)) {
+      try {
+        (el as any).value = finalValue;
+        el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: params.text, inputType: 'insertText' }));
+        el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+      } catch {}
     }
-    el.innerText += params.text;
-    el.dispatchEvent(new Event('input', { bubbles: true }));
+  } else if (isContentEditable) {
+    if (shouldClear) {
+      targetEl.innerText = '';
+    }
+    let inserted = false;
+    try {
+      inserted = document.execCommand('insertText', false, params.text);
+    } catch {}
+    if (!inserted) {
+      targetEl.innerText += params.text;
+    }
+    targetEl.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: params.text }));
+  } else {
+    // Custom web component host (e.g. <v6_he-text-area>) without standard inner form element
+    if (shouldClear) {
+      try {
+        if ('value' in (targetEl as any)) (targetEl as any).value = '';
+        targetEl.innerText = '';
+      } catch {}
+    }
+
+    // Try document.execCommand insertText first
+    let inserted = false;
+    try {
+      inserted = document.execCommand('insertText', false, params.text);
+    } catch {}
+
+    // Set value property if it exists on custom element
+    if ('value' in (targetEl as any)) {
+      try {
+        const cur = (targetEl as any).value || '';
+        (targetEl as any).value = shouldClear ? params.text : (cur + params.text);
+      } catch {}
+    }
+
+    // Dispatch input & change events with composed: true
+    targetEl.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: params.text, inputType: 'insertText' }));
+    targetEl.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
   }
 
   if (shouldPressEnter) {
-    el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
-    el.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
-    el.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
+    const keyEnterInit: KeyboardEventInit = {
+      key: 'Enter',
+      code: 'Enter',
+      keyCode: 13,
+      which: 13,
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      view: window,
+    };
+    targetEl.dispatchEvent(new KeyboardEvent('keydown', keyEnterInit));
+    targetEl.dispatchEvent(new KeyboardEvent('keypress', keyEnterInit));
+    targetEl.dispatchEvent(new KeyboardEvent('keyup', keyEnterInit));
+    if (el !== targetEl) {
+      el.dispatchEvent(new KeyboardEvent('keydown', keyEnterInit));
+      el.dispatchEvent(new KeyboardEvent('keyup', keyEnterInit));
+    }
   }
 
-  return { success: true, message: `Typed "${params.text}" into element (enterPressed: ${shouldPressEnter})` };
+  return { success: true, message: `Typed "${params.text}" into element <${targetEl.tagName.toLowerCase()}> (enterPressed: ${shouldPressEnter})` };
 }
 
 export function performPressKey(key: string): { success: boolean; message: string } {
@@ -135,6 +222,7 @@ export function performPressKey(key: string): { success: boolean; message: strin
     key,
     bubbles: true,
     cancelable: true,
+    composed: true,
     view: window,
   };
 
@@ -215,11 +303,7 @@ export function readPageContent(params: {
 
   let targetEl: HTMLElement | null = null;
   if (params.selector && params.selector.trim()) {
-    try {
-      targetEl = document.querySelector<HTMLElement>(params.selector.trim());
-    } catch {
-      // Ignore invalid selector
-    }
+    targetEl = querySelectorDeep(document, params.selector.trim());
   }
 
   // Fallback to primary article/main container or document.body
@@ -281,12 +365,13 @@ export function getElementText(params: {
   flashElement(el);
 
   const tagName = el.tagName.toLowerCase();
-  const innerText = (el.innerText || el.textContent || '').trim();
-  const value = (el as HTMLInputElement).value || '';
+  const shadowInput = el.shadowRoot?.querySelector<HTMLInputElement | HTMLTextAreaElement>('input, textarea');
+  const innerText = (el.innerText || el.textContent || shadowInput?.value || el.shadowRoot?.textContent || '').trim();
+  const value = (el as HTMLInputElement).value || shadowInput?.value || '';
   const href = (el as HTMLAnchorElement).href || '';
-  const placeholder = el.getAttribute('placeholder') || '';
-  const title = el.getAttribute('title') || '';
-  const ariaLabel = el.getAttribute('aria-label') || '';
+  const placeholder = el.getAttribute('placeholder') || shadowInput?.getAttribute('placeholder') || '';
+  const title = el.getAttribute('title') || shadowInput?.getAttribute('title') || '';
+  const ariaLabel = el.getAttribute('aria-label') || shadowInput?.getAttribute('aria-label') || '';
 
   const details: string[] = [];
   if (innerText) details.push(`Text: "${innerText.slice(0, 1000)}"`);

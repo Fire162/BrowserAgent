@@ -545,6 +545,7 @@ export const App: React.FC = () => {
             targetTab={targetTab}
             onFocusTab={handleFocusTab}
             onCreateNewTab={handleCreateNewTab}
+            onGetFullMessages={() => activeExecutionRef.current?.getMessages() || []}
           />
         )}
 

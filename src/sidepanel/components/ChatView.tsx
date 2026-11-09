@@ -47,6 +47,7 @@ interface ChatViewProps {
   targetTab?: TargetTabInfo | null;
   onFocusTab?: () => void;
   onCreateNewTab?: () => void;
+  onGetFullMessages?: () => any[];
 }
 
 const QUICK_PROMPTS = [
@@ -79,6 +80,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
   targetTab,
   onFocusTab,
   onCreateNewTab,
+  onGetFullMessages,
 }) => {
   const [inputText, setInputText] = useState('');
   const [answerInput, setAnswerInput] = useState('');
@@ -190,6 +192,139 @@ export const ChatView: React.FC<ChatViewProps> = ({
     URL.revokeObjectURL(url);
   };
 
+  const handleExportFullSessionJSON = () => {
+    const rawMessages = onGetFullMessages ? onGetFullMessages() : [];
+    const totalStepsCount = turns.reduce((acc, t) => acc + t.steps.length, 0);
+
+    const fullSessionData = {
+      version: '1.1.8',
+      exportTimestamp: new Date().toISOString(),
+      session: {
+        provider: activeProvider,
+        model: activeModel,
+        status: isRunning ? 'running' : isPaused ? 'paused' : 'completed_or_idle',
+        targetTab: targetTab
+          ? {
+              id: targetTab.id,
+              title: targetTab.title,
+              url: targetTab.url,
+            }
+          : null,
+        telemetry: {
+          totalCostUSD: liveCostUSD,
+          totalTokens: liveTokens,
+          cachedTokens: liveCachedTokens,
+          maxBudgetUSD: maxBudgetUSD,
+          turnCount: turns.length,
+          stepCount: totalStepsCount,
+        },
+      },
+      turns: turns.map((turn, tIdx) => ({
+        turnNumber: tIdx + 1,
+        id: turn.id,
+        timestamp: new Date(turn.timestamp).toISOString(),
+        status: turn.status,
+        userPrompt: turn.userPrompt,
+        resultSummary: turn.resultSummary,
+        steps: turn.steps.map((s) => ({
+          stepNumber: s.stepNumber,
+          status: s.status,
+          timestamp: s.timestamp ? new Date(s.timestamp).toISOString() : undefined,
+          thought: s.thought,
+          toolCalls: s.toolCalls || (s.toolCall ? [s.toolCall] : []),
+          resultMessage: s.resultMessage,
+          costUSD: s.costUSD,
+          cachedTokens: s.cachedTokens,
+          hasScreenshot: Boolean(s.screenshotUrl),
+        })),
+      })),
+      rawMessages,
+    };
+
+    const blob = new Blob([JSON.stringify(fullSessionData, null, 2)], {
+      type: 'application/json;charset=utf-8',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `browseragent-full-session-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportFullSessionMarkdown = () => {
+    const rawMessages = onGetFullMessages ? onGetFullMessages() : [];
+    const totalStepsCount = turns.reduce((acc, t) => acc + t.steps.length, 0);
+    const exportTime = new Date().toISOString();
+
+    let md = `# 🌐 BrowserAgent Session Transcript\n\n`;
+    md += `| Metadata | Value |\n`;
+    md += `| :--- | :--- |\n`;
+    md += `| **Export Date** | \`${exportTime}\` |\n`;
+    md += `| **Provider** | **${activeProvider}** |\n`;
+    md += `| **Model** | \`${activeModel}\` |\n`;
+    md += `| **Session Status** | \`${isRunning ? 'Running' : isPaused ? 'Paused' : 'Completed'}\` |\n`;
+    if (targetTab) {
+      md += `| **Target Tab** | \`#${targetTab.id}\` — [${targetTab.title || 'Tab'}](${targetTab.url || ''}) |\n`;
+    }
+    md += `| **Total Turns** | \`${turns.length}\` |\n`;
+    md += `| **Total Steps** | \`${totalStepsCount}\` |\n`;
+    md += `| **Total Cost** | \`$${liveCostUSD.toFixed(5)} USD\` |\n`;
+    md += `| **Total Tokens** | \`${liveTokens.toLocaleString()}\` |\n`;
+    md += `| **Cached Tokens** | \`${liveCachedTokens.toLocaleString()}\` |\n\n`;
+    md += `---\n\n`;
+
+    turns.forEach((turn, tIdx) => {
+      md += `## Turn ${tIdx + 1}: ${turn.userPrompt}\n\n`;
+      md += `- **Started:** \`${new Date(turn.timestamp).toISOString()}\`\n`;
+      md += `- **Status:** \`${turn.status}\`\n\n`;
+
+      if (turn.steps.length > 0) {
+        md += `### Execution Steps (${turn.steps.length})\n\n`;
+        turn.steps.forEach((s) => {
+          md += `#### Step ${s.stepNumber} [${s.status.toUpperCase()}]\n\n`;
+          if (s.thought) {
+            md += `**Thought:**\n> ${s.thought.replace(/\n/g, '\n> ')}\n\n`;
+          }
+
+          const calls = s.toolCalls || (s.toolCall ? [s.toolCall] : []);
+          if (calls.length > 0) {
+            md += `**Tool Action:**\n\`\`\`json\n${JSON.stringify(calls, null, 2)}\n\`\`\`\n\n`;
+          }
+
+          if (s.resultMessage) {
+            md += `**DOM Result / Observation:**\n\`\`\`\n${s.resultMessage}\n\`\`\`\n\n`;
+          }
+
+          if (s.cachedTokens) {
+            md += `*Prompt Cache Hit: ${s.cachedTokens.toLocaleString()} tokens saved*\n\n`;
+          }
+        });
+      }
+
+      if (turn.resultSummary) {
+        md += `### Turn ${tIdx + 1} Result Summary\n\n${turn.resultSummary}\n\n`;
+      }
+
+      md += `---\n\n`;
+    });
+
+    if (rawMessages.length > 0) {
+      md += `## 📜 Raw LLM Message History (${rawMessages.length} messages)\n\n`;
+      md += `<details>\n<summary>Click to expand complete messages payload</summary>\n\n`;
+      md += `\`\`\`json\n${JSON.stringify(rawMessages, null, 2)}\n\`\`\`\n\n`;
+      md += `</details>\n`;
+    }
+
+    const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `browseragent-full-session-${Date.now()}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const budgetRatio = maxBudgetUSD > 0 ? liveCostUSD / maxBudgetUSD : 0;
   const budgetPercent = Math.min(100, Math.round(budgetRatio * 100));
 
@@ -218,6 +353,30 @@ export const ChatView: React.FC<ChatViewProps> = ({
               <Eye className="h-3 w-3" />
               <span>Focus Tab</span>
             </button>
+          )}
+
+          {turns.length > 0 && (
+            <>
+              <button
+                type="button"
+                onClick={handleExportFullSessionMarkdown}
+                title="Export entire conversation & all metadata as Markdown (.MD)"
+                className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-sky-300 hover:text-white text-[10px] flex items-center gap-1 transition-colors border border-slate-700/60 font-medium"
+              >
+                <Download className="h-3 w-3 text-sky-400" />
+                <span>Export .MD</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleExportFullSessionJSON}
+                title="Export entire conversation & all metadata as JSON (.JSON)"
+                className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-emerald-300 hover:text-white text-[10px] flex items-center gap-1 transition-colors border border-slate-700/60 font-medium"
+              >
+                <FileText className="h-3 w-3 text-emerald-400" />
+                <span>Export .JSON</span>
+              </button>
+            </>
           )}
 
           {hasActiveSession && onNewChat && (

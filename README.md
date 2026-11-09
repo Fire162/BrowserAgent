@@ -37,8 +37,9 @@
 * 🔑 **Bring Your Own Key (BYOK)**: Store API keys locally in `chrome.storage.local`. Keys and browser data go directly to LLM endpoints with zero middleman servers.
 * 💰 **User-Configurable Price Budget (No Fixed Step Limits)**: Runs continuously without arbitrary 25-step caps. You set a spending budget (e.g. `$0.05`, `$0.25`, or Unlimited); the agent tracks live token costs and pauses for confirmation before exceeding it.
 * 🛡️ **Resilient 429 Rate-Limit Handling**: Built-in exponential backoff with jitter and `Retry-After` header parsing automatically handles API rate limits without failing your task.
-* 🎯 **Intelligent Visual Labeling**: Numbers interactive elements on screen with high-contrast badges (`[1]`, `[2]`, `[3]...`), allowing LLMs to interact with elements without fragile CSS selectors.
-* 🛡️ **Realistic DOM Interaction**: Dispatches full synthetic event sequences (`pointerdown`, `mousedown`, `focus`, `click`, realistic keyboard strokes, smooth scrolling, and native dialog interception).
+* 🎯 **Intelligent Visual Labeling & Deep Shadow DOM**: Numbers interactive elements on screen with high-contrast badges (`[1]`, `[2]`, `[3]...`). Penetrates open shadow roots and custom web components (`<*-input>`, `<*-textarea>`, `<v6_he-text-area>`) seamlessly.
+* 🛡️ **Realistic DOM Interaction & Custom Element Typing**: Dispatches full synthetic event sequences (`pointerdown`, `mousedown`, `focus`, `click`, realistic keyboard strokes, smooth scrolling, and native dialog interception) with boundary-composed event propagation.
+* 📥 **Full Multi-Turn Session Export**: One-click export of complete conversations with all telemetry (cost, tokens, cached tokens), execution steps, thoughts, tool actions, and raw LLM message histories as structured `.MD` or `.JSON`.
 * 📊 **Live Step & Cost Timeline**: Watch the agent observe, reason, and execute actions with real-time feedback, per-step costs, and progress tracking.
 
 ---
@@ -49,7 +50,7 @@
 2. Enable **Developer mode** (toggle in the top-right corner).
 3. Click **Load unpacked** and select:
    `/root/browseragent/dist`
-   *(Or extract `/root/browseragent/browseragent-v1.1.7.zip`)*
+   *(Or extract `/root/browseragent/browseragent-v1.1.8.zip`)*
 4. Click the **BrowserAgent** icon in your browser toolbar to open the Side Panel!
 5. In **Keys & Models**, select your company, paste your API key, choose between the **Frontier Model** and **Budget Model**, and run tasks directly.
 
