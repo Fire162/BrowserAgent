@@ -40,7 +40,7 @@
 * 🙈 **Hide Sidepanel & Background Execution**: Collapse or hide the sidepanel at any time (via the header hide button) to reclaim 100% of your screen width while BrowserAgent executes tasks uninterrupted in the background service worker. Reopening the sidepanel or clicking a task notification instantly re-attaches and syncs all live steps, costs, and session progress in real time.
 * ⚡ **Live Steering User Bubbles & Step Tracking**: Real-time steering instructions appear directly as right-aligned user follow-up message bubbles and are embedded inside the action step timeline so you can see exactly which step received your intervention.
 * 💰 **Dedicated Budget Decision Dialog**: Clear visual decision interface when spending cap is reached, with instant extension chips (`+$0.25`, `+$0.50`, `+$1.00`), custom amount setting, or one-click task conclusion.
-* 🔔 **Desktop Notifications & Audio Chimes**: Sends native OS notifications and gentle audio chimes whenever the AI agent requires user input via `ask_user` or hits the spending budget limit.
+* 🔔 **Toolbar Icon Flashing Badges (Zero Desktop Popups)**: Replaces disruptive OS notifications with an elegant, non-intrusive flashing badge directly on the Chrome extension toolbar icon. Displays a blinking amber `?` badge when `ask_user` requires your focus/clarification, an emerald green `✓` when a task is `finish`ed, and a red `$` when the budget cap is reached. Clears automatically when the sidepanel is opened or focused.
 * 🧠 **Smart Skip vs. Ask User Failure Matrix**: When repeated step failures occur, the agent automatically skips non-critical or optional steps (e.g. promotional popups, cookie banners, optional fields) to avoid getting stuck, while requesting user intervention for essential actions (e.g. logins, CAPTCHAs, 2FA).
 * 🛑 **Anti-Repetition Circuit Breaker**: Detects repeated action failures and prevents infinite loops by alerting the model and blocking consecutive identical failed actions.
 * 🎯 **Intelligent Visual Labeling & Deep Shadow DOM**: Numbers interactive elements on screen with high-contrast badges (`[1]`, `[2]`, `[3]...`). Penetrates open shadow roots and custom web components (`<*-input>`, `<*-textarea>`, `<v6_he-text-area>`) seamlessly.
@@ -56,7 +56,7 @@
 2. Enable **Developer mode** (toggle in the top-right corner).
 3. Click **Load unpacked** and select:
    `/root/browseragent/dist`
-   *(Or extract `/root/browseragent/browseragent-v1.2.2.zip`)*
+   *(Or extract `/root/browseragent/browseragent-v1.2.3.zip`)*
 4. Click the **BrowserAgent** icon in your browser toolbar to open the Side Panel!
 5. In **Keys & Models**, select your company, paste your API key, choose between the **Frontier Model** and **Budget Model**, and run tasks directly.
 

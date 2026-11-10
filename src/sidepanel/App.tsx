@@ -52,7 +52,8 @@ export const App: React.FC = () => {
   useEffect(() => {
     if (typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) return;
 
-    // Request initial state from background
+    // Request initial state from background and clear any blinking toolbar badge
+    chrome.runtime.sendMessage({ action: 'clear_badge' });
     chrome.runtime.sendMessage({ action: 'get_engine_state' }, (res) => {
       if (res?.success && res.state) {
         const s = res.state;
@@ -146,8 +147,14 @@ export const App: React.FC = () => {
       }
     };
 
+    const handleFocus = () => {
+      chrome.runtime.sendMessage({ action: 'clear_badge' });
+    };
+    window.addEventListener('focus', handleFocus);
+
     chrome.runtime.onMessage.addListener(messageListener);
     return () => {
+      window.removeEventListener('focus', handleFocus);
       chrome.runtime.onMessage.removeListener(messageListener);
     };
   }, []);

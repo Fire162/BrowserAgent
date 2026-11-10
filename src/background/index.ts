@@ -7,7 +7,7 @@ import { AgentExecution, StepRecord, TargetTabInfo, BudgetLimitDecision } from '
 import { performTabNavigation, performTabScreenshot } from '../core/agent/tab-ops';
 import { saveTask, TaskRecord } from '../core/storage/db';
 import { PROVIDERS } from '../core/llm/providers/registry';
-import { triggerNotification } from '../core/utils/notifications';
+import { notifyToolbarBadge, clearToolbarBadge, setToolbarBadgeRunning } from '../core/utils/badge';
 import { AllSettings } from '../core/llm/types';
 
 export interface ChatTurn {
@@ -142,6 +142,7 @@ async function runAgent(
     engineState.liveStatus = 'Continuing task on assigned tab with follow-up...';
     broadcast({ type: 'STATUS_SYNC', state: engineState });
     startKeepAlive();
+    setToolbarBadgeRunning();
 
     try {
       const summary = await activeExecution.run(followUpText);
@@ -174,7 +175,8 @@ async function runAgent(
           completedAt: Date.now(),
         });
 
-        triggerNotification('BrowserAgent: Task Completed', summary || 'The requested browser automation task has concluded.');
+        // Trigger finish notification via toolbar badge
+        notifyToolbarBadge('finish', { summary });
       }
     } catch (err: any) {
       engineState.isRunning = false;
@@ -187,7 +189,7 @@ async function runAgent(
           status: 'failed',
         };
       }
-      triggerNotification('BrowserAgent Task Failed', err.message);
+      notifyToolbarBadge('error', { error: err.message });
     } finally {
       stopKeepAlive();
       finalizeSteps();
@@ -223,6 +225,7 @@ async function runAgent(
   };
   broadcast({ type: 'STATUS_SYNC', state: engineState });
   startKeepAlive();
+  setToolbarBadgeRunning();
 
   const startTime = Date.now();
 
@@ -270,14 +273,17 @@ async function runAgent(
           };
         }
         engineState.liveStatus = 'Task completed.';
+        notifyToolbarBadge('finish', { summary });
         broadcast({ type: 'FINISH', summary, turns: engineState.turns });
       },
       onError: (err) => {
         engineState.liveStatus = `Error: ${err.message}`;
+        notifyToolbarBadge('error', { error: err.message });
         broadcast({ type: 'ERROR', error: err.message });
       },
       onAskUser: (question: string) => {
         engineState.pendingQuestion = question;
+        notifyToolbarBadge('ask_user', { question });
         broadcast({ type: 'ASK_USER', question });
         return new Promise<string>((resolve) => {
           userPromptResolver = resolve;
@@ -285,6 +291,7 @@ async function runAgent(
       },
       onBudgetLimitReached: (currentSpentUSD: number, currentCapUSD: number) => {
         engineState.pendingBudgetLimit = { currentSpentUSD, currentCapUSD };
+        notifyToolbarBadge('budget_limit');
         broadcast({ type: 'BUDGET_LIMIT', currentSpentUSD, currentCapUSD });
         return new Promise<BudgetLimitDecision>((resolve) => {
           budgetLimitResolver = resolve;
@@ -333,7 +340,7 @@ async function runAgent(
         completedAt: Date.now(),
       });
 
-      triggerNotification('BrowserAgent: Task Completed', summary || 'The requested browser automation task has concluded.');
+      notifyToolbarBadge('finish', { summary });
     }
   } catch (err: any) {
     engineState.isRunning = false;
@@ -361,7 +368,7 @@ async function runAgent(
       completedAt: Date.now(),
     });
 
-    triggerNotification('BrowserAgent Task Failed', err.message);
+    notifyToolbarBadge('error', { error: err.message });
   } finally {
     engineState.isRunning = false;
     engineState.pendingQuestion = null;
@@ -439,14 +446,17 @@ function resumeHistoryTask(task: TaskRecord, settings: AllSettings) {
           };
         }
         engineState.liveStatus = 'Task completed.';
+        notifyToolbarBadge('finish', { summary });
         broadcast({ type: 'FINISH', summary, turns: engineState.turns });
       },
       onError: (err) => {
         engineState.liveStatus = `Error: ${err.message}`;
+        notifyToolbarBadge('error', { error: err.message });
         broadcast({ type: 'ERROR', error: err.message });
       },
       onAskUser: (question: string) => {
         engineState.pendingQuestion = question;
+        notifyToolbarBadge('ask_user', { question });
         broadcast({ type: 'ASK_USER', question });
         return new Promise<string>((resolve) => {
           userPromptResolver = resolve;
@@ -454,6 +464,7 @@ function resumeHistoryTask(task: TaskRecord, settings: AllSettings) {
       },
       onBudgetLimitReached: (currentSpentUSD: number, currentCapUSD: number) => {
         engineState.pendingBudgetLimit = { currentSpentUSD, currentCapUSD };
+        notifyToolbarBadge('budget_limit');
         broadcast({ type: 'BUDGET_LIMIT', currentSpentUSD, currentCapUSD });
         return new Promise<BudgetLimitDecision>((resolve) => {
           budgetLimitResolver = resolve;
@@ -486,7 +497,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
-  // 2. Start a fresh task in background
+  // 2. Clear toolbar badge (e.g. when sidepanel opens or gains focus)
+  if (action === 'clear_badge') {
+    clearToolbarBadge();
+    sendResponse({ success: true });
+    return true;
+  }
+
+  // 3. Start a fresh task in background
   if (action === 'start_task') {
     const { goal, settings, targetTabId } = params || {};
     runAgent(goal, settings, targetTabId);
@@ -494,7 +512,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
-  // 3. Resume task with follow-up
+  // 4. Resume task with follow-up
   if (action === 'resume_task') {
     const { followUpText, settings } = params || {};
     runAgent('', settings, undefined, followUpText);
@@ -502,7 +520,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
-  // 4. Pause active task
+  // 5. Pause active task
   if (action === 'pause_task') {
     if (activeExecution) {
       activeExecution.pause();
@@ -510,11 +528,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       engineState.liveStatus = 'Task paused. Enter follow-up instructions to resume.';
       broadcast({ type: 'STATUS_SYNC', state: engineState });
     }
+    clearToolbarBadge();
     sendResponse({ success: true });
     return true;
   }
 
-  // 5. Abort active task
+  // 6. Abort active task
   if (action === 'abort_task') {
     if (activeExecution) {
       activeExecution.abort();
@@ -523,12 +542,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     engineState.isRunning = false;
     engineState.isPaused = false;
     engineState.liveStatus = 'Task stopped by user.';
+    clearToolbarBadge();
     broadcast({ type: 'STATUS_SYNC', state: engineState });
     sendResponse({ success: true });
     return true;
   }
 
-  // 6. Send live steering guidance
+  // 7. Send live steering guidance
   if (action === 'send_steering') {
     const { message } = params || {};
     if (activeExecution && message?.trim()) {
@@ -548,7 +568,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
-  // 7. Answer pending user clarification
+  // 8. Answer pending user clarification
   if (action === 'answer_question') {
     const { answer } = params || {};
     if (userPromptResolver) {
@@ -556,12 +576,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       userPromptResolver = null;
     }
     engineState.pendingQuestion = null;
+    setToolbarBadgeRunning();
     broadcast({ type: 'STATUS_SYNC', state: engineState });
     sendResponse({ success: true });
     return true;
   }
 
-  // 8. Resolve budget limit decision
+  // 9. Resolve budget limit decision
   if (action === 'resolve_budget_limit') {
     const { decision } = params || {};
     if (budgetLimitResolver) {
@@ -569,12 +590,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       budgetLimitResolver = null;
     }
     engineState.pendingBudgetLimit = null;
+    if (decision?.action === 'extend') {
+      setToolbarBadgeRunning();
+    } else {
+      clearToolbarBadge();
+    }
     broadcast({ type: 'STATUS_SYNC', state: engineState });
     sendResponse({ success: true });
     return true;
   }
 
-  // 9. Reset chat session
+  // 10. Reset chat session
   if (action === 'new_chat') {
     if (activeExecution) {
       activeExecution.abort();
@@ -585,6 +611,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       budgetLimitResolver = null;
     }
     userPromptResolver = null;
+    clearToolbarBadge();
     engineState = {
       isRunning: false,
       isPaused: false,
@@ -605,15 +632,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
-  // 10. Resume task loaded from History
+  // 11. Resume task loaded from History
   if (action === 'resume_history_task') {
     const { task, settings } = params || {};
     resumeHistoryTask(task, settings);
+    clearToolbarBadge();
     sendResponse({ success: true });
     return true;
   }
 
-  // 11. Retrieve full raw messages for JSON/MD export
+  // 12. Retrieve full raw messages for JSON/MD export
   if (action === 'get_full_messages') {
     sendResponse({
       success: true,
@@ -622,7 +650,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
-  // 12. Update target tab selection from UI
+  // 13. Update target tab selection from UI
   if (action === 'set_target_tab') {
     const { tabInfo } = params || {};
     if (tabInfo) {
@@ -633,7 +661,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
-  // 13. Tab Navigation
+  // 14. Tab Navigation
   if (action === 'navigate_tab') {
     const { tabId, url } = params || {};
     performTabNavigation(tabId, url).then((res) => {
@@ -642,7 +670,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
-  // 14. Tab Screenshot
+  // 15. Tab Screenshot
   if (action === 'capture_screenshot') {
     const { tabId } = params || {};
     performTabScreenshot(tabId).then((res) => {
@@ -651,7 +679,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
-  // 15. Content Script Injection check
+  // 16. Content Script Injection check
   if (action === 'ensure_content_script') {
     const { tabId } = params || {};
     chrome.tabs.sendMessage(tabId, { action: 'ping' }, (res) => {
@@ -675,50 +703,4 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     });
     return true;
   }
-
-  // 16. Desktop Notification
-  if (action === 'show_notification') {
-    const { title, message } = params || {};
-    try {
-      if (typeof chrome !== 'undefined' && chrome.notifications?.create) {
-        chrome.notifications.create(
-          `browseragent_notice_${Date.now()}`,
-          {
-            type: 'basic',
-            iconUrl: chrome.runtime.getURL('icons/icon128.png'),
-            title: title || 'BrowserAgent',
-            message: message || 'BrowserAgent needs your attention.',
-            priority: 2,
-            requireInteraction: true,
-          },
-          (notificationId) => {
-            sendResponse({ success: true, notificationId });
-          }
-        );
-        return true;
-      }
-    } catch (e: any) {
-      sendResponse({ success: false, error: e?.message });
-      return true;
-    }
-    sendResponse({ success: false, error: 'Notifications API unavailable' });
-    return true;
-  }
 });
-
-// Reopen sidepanel and focus window when user clicks any notification
-if (typeof chrome !== 'undefined' && chrome.notifications?.onClicked) {
-  chrome.notifications.onClicked.addListener(async () => {
-    try {
-      const win = await chrome.windows.getCurrent();
-      if (win?.id) {
-        await chrome.windows.update(win.id, { focused: true });
-        if ((chrome as any).sidePanel?.open) {
-          await (chrome as any).sidePanel.open({ windowId: win.id });
-        }
-      }
-    } catch (e) {
-      console.error('[BrowserAgent Background] Failed to open side panel on notification click:', e);
-    }
-  });
-}

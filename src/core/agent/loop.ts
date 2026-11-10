@@ -2,7 +2,7 @@ import { AllSettings, ChatMessage, ToolCall } from '../llm/types';
 import { executeLLMCall } from '../llm/client';
 import { AGENT_TOOLS } from './tools';
 import { SYSTEM_PROMPT } from './prompts';
-import { triggerNotification } from '../utils/notifications';
+import { triggerNotification, notifyToolbarBadge } from '../utils/notifications';
 import { performTabNavigation, performTabScreenshot } from './tab-ops';
 
 export interface TargetTabInfo {
@@ -441,11 +441,8 @@ export class AgentExecution {
         if (maxBudgetUSD > 0 && this.accumulatedCostUSD >= maxBudgetUSD) {
           this.callbacks.onLog?.(`Budget limit reached ($${maxBudgetUSD.toFixed(2)}). Awaiting new budget decision...`);
 
-          // Trigger high-priority OS notification and audio chime
-          triggerNotification(
-            'BrowserAgent Budget Limit Reached',
-            `Reached spending limit of $${maxBudgetUSD.toFixed(2)} (Spent: $${this.accumulatedCostUSD.toFixed(4)}). Configure your new budget in the Side Panel.`
-          );
+          // Trigger flashing toolbar icon badge to alert user
+          notifyToolbarBadge('budget_limit');
 
           let decision: BudgetLimitDecision = { action: 'extend', newBudgetUSD: maxBudgetUSD + 0.25 };
           if (this.callbacks.onBudgetLimitReached) {
@@ -732,8 +729,8 @@ What is your next action?`;
             this.callbacks.onStepComplete?.(stepRecord);
             this.callbacks.onLog?.('Awaiting your input...');
 
-            // Notify user with OS desktop notification & audio chime!
-            triggerNotification('BrowserAgent Needs Your Input', question);
+            // Trigger blinking toolbar icon badge for user attention!
+            notifyToolbarBadge('ask_user', { question });
 
             let userReply = 'Confirmed. Please proceed.';
             if (this.callbacks.onAskUser) {
@@ -840,6 +837,7 @@ What is your next action?`;
         if (shouldFinish) {
           await this.clearBadges(tabId);
           this.completed = true;
+          notifyToolbarBadge('finish', { summary: finishSummary });
           this.callbacks.onFinish?.(finishSummary);
           return finishSummary;
         }
