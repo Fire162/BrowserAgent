@@ -203,7 +203,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
     const totalStepsCount = turns.reduce((acc, t) => acc + t.steps.length, 0);
 
     const fullSessionData = {
-      version: '1.2.1',
+      version: '1.2.2',
       exportTimestamp: new Date().toISOString(),
       session: {
         provider: activeProvider,

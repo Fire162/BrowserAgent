@@ -4,6 +4,7 @@
 
 export function playNotificationChime(): void {
   try {
+    if (typeof window === 'undefined') return;
     const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
     if (!AudioCtx) return;
     const ctx = new AudioCtx();
@@ -33,18 +34,35 @@ export function playNotificationChime(): void {
     osc2.start(now + 0.12);
     osc2.stop(now + 0.35);
   } catch {
-    // AudioContext may be restricted before initial user interaction
+    // AudioContext may be restricted before initial user interaction or unavailable in SW
   }
 }
 
 export function triggerNotification(title: string, message: string): void {
   playNotificationChime();
   try {
-    if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
-      chrome.runtime.sendMessage({
-        action: 'show_notification',
-        params: { title, message },
-      });
+    if (typeof chrome !== 'undefined') {
+      if (chrome.notifications && chrome.notifications.create) {
+        chrome.notifications.create(
+          `browseragent_notice_${Date.now()}`,
+          {
+            type: 'basic',
+            iconUrl: chrome.runtime.getURL('icons/icon128.png'),
+            title: title || 'BrowserAgent',
+            message: message || 'BrowserAgent needs your attention.',
+            priority: 2,
+            requireInteraction: true,
+          },
+          () => {
+            // notification created
+          }
+        );
+      } else if (chrome.runtime?.sendMessage) {
+        chrome.runtime.sendMessage({
+          action: 'show_notification',
+          params: { title, message },
+        });
+      }
     }
   } catch {
     // Ignore errors in notification dispatch

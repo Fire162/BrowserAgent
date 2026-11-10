@@ -3,6 +3,7 @@ import { executeLLMCall } from '../llm/client';
 import { AGENT_TOOLS } from './tools';
 import { SYSTEM_PROMPT } from './prompts';
 import { triggerNotification } from '../utils/notifications';
+import { performTabNavigation, performTabScreenshot } from './tab-ops';
 
 export interface TargetTabInfo {
   id: number;
@@ -195,7 +196,10 @@ export class AgentExecution {
       throw new Error('Chrome extension tabs API is not available.');
     }
 
-    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    let tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    if (!tabs || tabs.length === 0 || !tabs[0].id) {
+      tabs = await chrome.tabs.query({ active: true });
+    }
     if (!tabs || tabs.length === 0 || !tabs[0].id) {
       throw new Error('No active browser tab found.');
     }
@@ -705,11 +709,7 @@ What is your next action?`;
             break;
           } else if (currentTool.name === 'take_screenshot') {
             this.callbacks.onLog?.('Capturing tab screenshot...');
-            const shotRes = await new Promise<any>((resolve) => {
-              chrome.runtime.sendMessage({ action: 'capture_screenshot', params: { tabId } }, (res) => {
-                resolve(res || {});
-              });
-            });
+            const shotRes = await performTabScreenshot(tabId);
 
             if (shotRes?.success && shotRes?.dataUrl) {
               stepRecord.screenshotUrl = shotRes.dataUrl;
@@ -764,11 +764,9 @@ What is your next action?`;
           } else if (currentTool.name === 'navigate') {
             const url = currentTool.arguments.url;
             this.callbacks.onLog?.(`Navigating tab #${tabId} to ${url}...`);
-            const navRes: any = await new Promise<any>((resolve) => {
-              chrome.runtime.sendMessage({ action: 'navigate_tab', params: { tabId, url } }, (res) => {
-                setTimeout(() => resolve(res || { success: true }), 1500);
-              });
-            });
+            const navRes = await performTabNavigation(tabId, url);
+            // Brief grace period for page rendering to settle
+            await this.sleep(1200);
 
             if (navRes && !navRes.success) {
               resultStr = navRes.error || `Failed to navigate to ${url}: Site does not exist or could not be loaded.`;

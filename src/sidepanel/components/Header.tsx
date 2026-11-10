@@ -1,5 +1,5 @@
 import React from 'react';
-import { Bot, Sliders, History, Sparkles } from 'lucide-react';
+import { Bot, Sliders, History, Sparkles, PanelRightClose } from 'lucide-react';
 import { AllSettings } from '../../core/llm/types';
 import { PROVIDERS } from '../../core/llm/providers/registry';
 
@@ -10,6 +10,7 @@ interface HeaderProps {
   onSelectTab: (tab: ActiveTab) => void;
   settings: AllSettings;
   isRunning: boolean;
+  onHideSidepanel?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -17,6 +18,7 @@ export const Header: React.FC<HeaderProps> = ({
   onSelectTab,
   settings,
   isRunning,
+  onHideSidepanel,
 }) => {
   const activeDef = PROVIDERS[settings.activeProvider];
   const activeConfig = settings.providers[settings.activeProvider];
@@ -34,21 +36,39 @@ export const Header: React.FC<HeaderProps> = ({
           <div>
             <div className="flex items-center gap-1.5">
               <span className="font-bold text-sm tracking-tight text-white">BrowserAgent</span>
-              <span className="text-[10px] bg-sky-500/10 text-sky-400 border border-sky-500/20 px-1 rounded font-mono">v1.2.1</span>
+              <span className="text-[10px] bg-sky-500/10 text-sky-400 border border-sky-500/20 px-1 rounded font-mono">v1.2.2</span>
             </div>
           </div>
         </div>
 
-        {/* Model Indicator Pill */}
-        <div
-          onClick={() => onSelectTab('settings')}
-          className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-slate-800/80 border border-slate-700/60 text-xs text-slate-300 hover:border-sky-500/40 hover:text-white cursor-pointer transition-colors max-w-[170px]"
-          title="Click to change Provider or Model"
-        >
-          <Sparkles className="h-3 w-3 text-sky-400 shrink-0" />
-          <span className="font-medium truncate text-[11px]">
-            {activeDef?.name || settings.activeProvider}: <span className="text-slate-400">{currentModelName.split('/').pop()}</span>
-          </span>
+        {/* Right Action Bar */}
+        <div className="flex items-center gap-1.5">
+          {/* Model Indicator Pill */}
+          <div
+            onClick={() => onSelectTab('settings')}
+            className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-slate-800/80 border border-slate-700/60 text-xs text-slate-300 hover:border-sky-500/40 hover:text-white cursor-pointer transition-colors max-w-[155px]"
+            title="Click to change Provider or Model"
+          >
+            <Sparkles className="h-3 w-3 text-sky-400 shrink-0" />
+            <span className="font-medium truncate text-[11px]">
+              {activeDef?.name || settings.activeProvider}: <span className="text-slate-400">{currentModelName.split('/').pop()}</span>
+            </span>
+          </div>
+
+          {/* Hide Sidepanel Button */}
+          {onHideSidepanel && (
+            <button
+              onClick={onHideSidepanel}
+              className="p-1 rounded-md bg-slate-800/80 border border-slate-700/60 text-slate-400 hover:text-white hover:border-slate-500 hover:bg-slate-700 transition-colors flex items-center justify-center shrink-0 relative group"
+              title="Hide Sidepanel (runs continuously in background)"
+              aria-label="Hide Sidepanel"
+            >
+              <PanelRightClose className="h-3.5 w-3.5" />
+              {isRunning && (
+                <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-emerald-400 ring-2 ring-slate-900 animate-pulse" />
+              )}
+            </button>
+          )}
         </div>
       </div>
 

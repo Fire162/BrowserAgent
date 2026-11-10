@@ -37,6 +37,7 @@
 * 🔑 **Bring Your Own Key (BYOK)**: Store API keys locally in `chrome.storage.local`. Keys and browser data go directly to LLM endpoints with zero middleman servers.
 * 💰 **User-Configurable Price Budget (No Fixed Step Limits)**: Runs continuously without arbitrary 25-step caps. You set a spending budget (e.g. `$0.05`, `$0.25`, or Unlimited); the agent tracks live token costs and pauses for confirmation before exceeding it.
 * 🛡️ **Resilient 429 Rate-Limit Handling**: Built-in exponential backoff with jitter and `Retry-After` header parsing automatically handles API rate limits without failing your task.
+* 🙈 **Hide Sidepanel & Background Execution**: Collapse or hide the sidepanel at any time (via the header hide button) to reclaim 100% of your screen width while BrowserAgent executes tasks uninterrupted in the background service worker. Reopening the sidepanel or clicking a task notification instantly re-attaches and syncs all live steps, costs, and session progress in real time.
 * ⚡ **Live Steering User Bubbles & Step Tracking**: Real-time steering instructions appear directly as right-aligned user follow-up message bubbles and are embedded inside the action step timeline so you can see exactly which step received your intervention.
 * 💰 **Dedicated Budget Decision Dialog**: Clear visual decision interface when spending cap is reached, with instant extension chips (`+$0.25`, `+$0.50`, `+$1.00`), custom amount setting, or one-click task conclusion.
 * 🔔 **Desktop Notifications & Audio Chimes**: Sends native OS notifications and gentle audio chimes whenever the AI agent requires user input via `ask_user` or hits the spending budget limit.
@@ -55,7 +56,7 @@
 2. Enable **Developer mode** (toggle in the top-right corner).
 3. Click **Load unpacked** and select:
    `/root/browseragent/dist`
-   *(Or extract `/root/browseragent/browseragent-v1.2.1.zip`)*
+   *(Or extract `/root/browseragent/browseragent-v1.2.2.zip`)*
 4. Click the **BrowserAgent** icon in your browser toolbar to open the Side Panel!
 5. In **Keys & Models**, select your company, paste your API key, choose between the **Frontier Model** and **Budget Model**, and run tasks directly.
 
