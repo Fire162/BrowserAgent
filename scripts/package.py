@@ -22,6 +22,14 @@ if not os.path.exists(dist_dir):
     print("dist directory does not exist. Run build first.")
     exit(1)
 
+# Clean up older versioned zips to prevent clutter
+for fname in os.listdir(root_dir):
+    if fname.startswith('browseragent-v') and fname.endswith('.zip') and fname != zip_name:
+        try:
+            os.remove(os.path.join(root_dir, fname))
+        except Exception:
+            pass
+
 for path in [zip_path, latest_zip_path]:
     if os.path.exists(path):
         os.remove(path)
