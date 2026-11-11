@@ -1,6 +1,8 @@
 # Privacy Policy for BrowserAgent
 
-**Last updated:** November 11, 2026
+**Last updated:** November 11, 2026  
+**Official Online Privacy Page:** [https://abhinavmaurya.me/extensions/BrowserAgent?privacy](https://abhinavmaurya.me/extensions/BrowserAgent?privacy)  
+**Extension Homepage:** [https://abhinavmaurya.me/extensions/BrowserAgent](https://abhinavmaurya.me/extensions/BrowserAgent)  
 
 BrowserAgent ("we", "our", or "the extension") is a client-side browser extension designed as an autonomous AI web navigation assistant. We are committed to protecting your privacy and ensuring complete transparency regarding how your data is handled.
 

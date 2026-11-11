@@ -3,6 +3,7 @@
 ### Autonomous In-Browser AI Agent with Bring-Your-Own-Key (BYOK)
 
 [![Manifest V3](https://img.shields.io/badge/Chrome_Extension-Manifest_V3-success?logo=googlechrome&logoColor=white)](https://developer.chrome.com/docs/extensions/mv3/)
+[![Microsoft Edge](https://img.shields.io/badge/Edge_Add--ons-v1.1.7-0078D4?logo=microsoftedge&logoColor=white)](https://microsoftedge.microsoft.com/addons/detail/browseragent-autonomous/aadfbhkenbnmamfafpnpfdmmihmmblfm)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![React 19](https://img.shields.io/badge/React-19-cyan?logo=react&logoColor=white)](https://react.dev/)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind-v4-38bdf8?logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
@@ -11,6 +12,10 @@
 **BrowserAgent** is an autonomous AI browser companion running directly in your browser's **Side Panel**. Bring your own API key and prompt tasks directly from your active browser tabs.
 
 **Zero external VPS or backend server required. 100% client-side privacy.**
+
+* 🌐 **Live Showcase & Downloads**: [https://abhinavmaurya.me/extensions/BrowserAgent](https://abhinavmaurya.me/extensions/BrowserAgent)
+* 🔒 **Privacy Policy**: [https://abhinavmaurya.me/extensions/BrowserAgent?privacy](https://abhinavmaurya.me/extensions/BrowserAgent?privacy)
+* 🛒 **Microsoft Edge Add-ons**: [Install BrowserAgent](https://microsoftedge.microsoft.com/addons/detail/browseragent-autonomous/aadfbhkenbnmamfafpnpfdmmihmmblfm)
 
 ---
 
