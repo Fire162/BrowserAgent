@@ -297,7 +297,8 @@ export function performScroll(direction: 'down' | 'up', amount = 500): { success
 export function extractPageData(): { title: string; url: string; textContent: string } {
   const title = document.title || '';
   const url = window.location.href;
-  const textContent = (document.body ? document.body.innerText : '')
+  const rawText = (document.body ? document.body.innerText : (document.documentElement ? document.documentElement.innerText : '')) || '';
+  const textContent = rawText
     .split('\n')
     .map((line) => line.trim())
     .filter((line) => line.length > 0)

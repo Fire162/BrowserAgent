@@ -38,20 +38,35 @@ import {
     const { action, params } = request || {};
 
     if (action === 'get_snapshot') {
-      const showBadges = params?.showVisualLabels ?? true;
-      const { elements, snapshotText } = scanAndLabelElements(showBadges);
-      const { textContent } = extractPageData();
+      try {
+        const showBadges = params?.showVisualLabels ?? true;
+        const { elements, snapshotText } = scanAndLabelElements(showBadges);
+        const { textContent } = extractPageData();
 
-      sendResponse({
-        success: true,
-        data: {
-          url: window.location.href,
-          title: document.title,
-          elements,
-          snapshotText,
-          bodySnippet: textContent.slice(0, 1000),
-        },
-      });
+        sendResponse({
+          success: true,
+          data: {
+            url: window.location.href,
+            title: document.title,
+            elements,
+            snapshotText,
+            bodySnippet: textContent.slice(0, 1000),
+          },
+        });
+      } catch (err: any) {
+        console.warn('[BrowserAgent Content] scanAndLabelElements failed, returning fallback snapshot:', err);
+        const rawText = (document.body ? document.body.innerText : (document.documentElement ? document.documentElement.innerText : '')) || '';
+        sendResponse({
+          success: true,
+          data: {
+            url: window.location.href,
+            title: document.title || 'Untitled',
+            elements: [],
+            snapshotText: `[PAGE SNAPSHOT NOTICE]: Could not index interactive elements (${err?.message || 'Page structure limited'}).`,
+            bodySnippet: rawText.slice(0, 1000),
+          },
+        });
+      }
       return true;
     }
 

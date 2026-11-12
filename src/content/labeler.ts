@@ -178,7 +178,11 @@ export function scanAndLabelElements(showVisualBadges = true): { elements: Eleme
     container.style.height = '100%';
     container.style.pointerEvents = 'none';
     container.style.zIndex = '2147483647';
-    document.body.appendChild(container);
+    if (document.body) {
+      document.body.appendChild(container);
+    } else if (document.documentElement) {
+      document.documentElement.appendChild(container);
+    }
   }
 
   const descriptors: ElementDescriptor[] = [];

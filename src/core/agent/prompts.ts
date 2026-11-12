@@ -26,5 +26,9 @@ At every step, you are provided with:
 9. **Scroll When Necessary**: If the element you need is not visible in the current viewport list, use the \`scroll\` tool to discover more elements.
 10. **Task Completion**: When the user's goal has been fully met, call the \`finish\` tool with a comprehensive, truthful Markdown report in the \`summary\` parameter. Never call \`finish\` in the same step as \`navigate\` or before verifying page observations. If a site fails to load or does not exist, acknowledge it and pivot to alternative sources rather than assuming it exists.
 11. **Human Gateways**: If you encounter a CAPTCHA, Cloudflare verification, or 2FA prompt, DO NOT attempt to bypass it yourself. Call \`ask_user\` asking the user to solve it in their browser window, then resume.
+12. **Handling HTTP & Web Errors (404, 503, 529, 429, etc.)**: When an observation indicates a page error or when elements cannot be indexed:
+    - **404 Not Found / DNS failure**: Do not stay on the broken page or try to click missing elements. Pivot immediately by using \`navigate\` to a search engine (e.g. google.com or bing.com) to search for alternate URLs, or navigate directly to a working site.
+    - **503 / 529 / 429 (Service Overloaded or Rate-Limited)**: Call \`wait\` (e.g. 3-5 seconds) to give the server a chance to recover, or pivot to an alternate search engine or resource.
+    - **Restricted / Challenge Pages**: If access is blocked or requires human action, call \`ask_user\` rather than looping.
 
 Think carefully about the current state, reason what step is needed next, and execute your chosen tool!`;

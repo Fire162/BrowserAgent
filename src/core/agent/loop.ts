@@ -3,7 +3,7 @@ import { executeLLMCall } from '../llm/client';
 import { AGENT_TOOLS } from './tools';
 import { SYSTEM_PROMPT } from './prompts';
 import { triggerNotification, notifyToolbarBadge } from '../utils/notifications';
-import { performTabNavigation, performTabScreenshot } from './tab-ops';
+import { performTabNavigation, performTabScreenshot, detectHttpOrBrowserError, HttpOrBrowserError } from './tab-ops';
 
 export interface TargetTabInfo {
   id: number;
@@ -222,70 +222,133 @@ export class AgentExecution {
   }
 
   private async getPageSnapshot(tabId: number, showVisualLabels: boolean): Promise<any> {
-    // 1. Detect if the tab is on an unscriptable error page (e.g. DNS failure, ERR_NAME_NOT_RESOLVED)
+    // 1. Inspect tab metadata
+    let tab: chrome.tabs.Tab | undefined;
     try {
-      const tab = await chrome.tabs.get(tabId);
-      const tabUrl = tab?.url || '';
-      const tabTitle = (tab?.title || '').toLowerCase();
-      if (
-        tabUrl.startsWith('chrome-error://') ||
-        tabTitle.includes("site can't be reached") ||
-        tabTitle.includes("site can’t be reached") ||
-        tabTitle.includes('err_name_not_resolved') ||
-        tabTitle.includes('err_connection_refused') ||
-        tabTitle.includes('dns_probe_finished')
-      ) {
-        return {
-          url: tabUrl,
-          title: tab?.title || "Site can't be reached",
-          elements: [],
-          snapshotText: `[PAGE LOAD ERROR]: This site cannot be reached (${tab?.title || 'ERR_NAME_NOT_RESOLVED'}). The requested domain does not exist or failed to load. Do NOT assume content exists here; please pivot to another site or search engine.`,
-          bodySnippet: "Site can't be reached",
-        };
-      }
+      tab = await chrome.tabs.get(tabId);
     } catch {
       // Ignore tab get error
     }
 
-    return new Promise((resolve, reject) => {
-      chrome.tabs.sendMessage(
-        tabId,
-        { action: 'get_snapshot', params: { showVisualLabels } },
-        (res) => {
-          if (chrome.runtime.lastError) {
-            // Check if tab is on an error page before rejecting
-            chrome.tabs
-              .get(tabId)
-              .then((tab) => {
-                const tabUrl = tab?.url || '';
-                const tabTitle = (tab?.title || '').toLowerCase();
-                if (
-                  tabUrl.startsWith('chrome-error://') ||
-                  tabTitle.includes("can't be reached") ||
-                  tabTitle.includes("can’t be reached")
-                ) {
-                  resolve({
-                    url: tabUrl,
-                    title: tab?.title || "Site can't be reached",
-                    elements: [],
-                    snapshotText: `[PAGE LOAD ERROR]: ${tab?.title || "This site cannot be reached"}. DNS resolution failed or page does not exist.`,
-                    bodySnippet: "Site can't be reached",
-                  });
-                } else {
-                  reject(new Error(chrome.runtime.lastError?.message || 'Failed to capture page snapshot.'));
-                }
-              })
-              .catch(() => {
-                reject(new Error(chrome.runtime.lastError?.message || 'Failed to capture page snapshot.'));
-              });
-          } else if (res && res.success) {
-            resolve(res.data);
-          } else {
-            reject(new Error(res?.message || 'Failed to capture page snapshot.'));
+    const tabUrl = tab?.url || '';
+    const tabTitle = tab?.title || '';
+
+    // 2. Detect unscriptable browser/internal error pages (Edge, Chrome, neterror)
+    const earlyError = detectHttpOrBrowserError(tabUrl, tabTitle, '');
+    if (
+      tabUrl.startsWith('chrome-error://') ||
+      tabUrl.startsWith('edge-error://') ||
+      tabUrl.startsWith('about:neterror') ||
+      tabUrl.startsWith('edge://') ||
+      tabUrl.startsWith('chrome://') ||
+      earlyError.type === 'DNS / Connection Failure'
+    ) {
+      return {
+        url: tabUrl,
+        title: tabTitle || "Site can't be reached",
+        elements: [],
+        snapshotText: `[PAGE LOAD / NETWORK ERROR]: ${earlyError.type || 'Connection Failure'} - ${earlyError.detail || 'The page cannot be reached.'}
+URL: ${tabUrl}
+Title: ${tabTitle || "Site can't be reached"}
+Directive for Agent: The page returned a network/browser error and cannot load elements. Pivot immediately: navigate to a search engine (like google.com or bing.com) or an alternate URL.`,
+        bodySnippet: tabTitle || "Site can't be reached",
+        isErrorPage: true,
+        errorInfo: earlyError,
+      };
+    }
+
+    // 3. Request snapshot from content script with timeout
+    let contentRes: any = null;
+    try {
+      contentRes = await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          reject(new Error('Content script request timed out'));
+        }, 3500);
+
+        chrome.tabs.sendMessage(
+          tabId,
+          { action: 'get_snapshot', params: { showVisualLabels } },
+          (res) => {
+            clearTimeout(timer);
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+            } else if (res && res.success) {
+              resolve(res.data);
+            } else {
+              reject(new Error(res?.message || 'Invalid snapshot response'));
+            }
           }
+        );
+      });
+    } catch (msgErr: any) {
+      // Content script messaging failed. Attempt direct script execution fallback.
+      try {
+        const injected = await chrome.scripting.executeScript({
+          target: { tabId },
+          func: () => {
+            const title = document.title || '';
+            const url = window.location.href;
+            const body = (document.body ? document.body.innerText : (document.documentElement ? document.documentElement.innerText : '')) || '';
+            return {
+              title,
+              url,
+              bodySnippet: body.slice(0, 1500),
+            };
+          },
+        });
+
+        if (injected && injected[0]?.result) {
+          const raw = injected[0].result;
+          const fallbackError = detectHttpOrBrowserError(raw.url, raw.title, raw.bodySnippet);
+          return {
+            url: raw.url || tabUrl,
+            title: raw.title || tabTitle || 'Untitled',
+            elements: [],
+            snapshotText: fallbackError.isError
+              ? `[PAGE ERROR DETECTED]: ${fallbackError.type} - ${fallbackError.detail}\nPage text:\n${raw.bodySnippet.slice(0, 600)}`
+              : (raw.bodySnippet
+                  ? `[PAGE OBSERVATION (TEXT-ONLY FALLBACK)]:\n${raw.bodySnippet.slice(0, 1200)}`
+                  : `[PAGE NOTICE]: Page loaded without visible text or interactive elements.`),
+            bodySnippet: raw.bodySnippet,
+            isErrorPage: fallbackError.isError,
+            errorInfo: fallbackError,
+          };
         }
-      );
-    });
+      } catch {
+        // executeScript also failed (e.g. edge-error:// or restricted page)
+      }
+
+      // Ultimate fallback: NEVER throw; return structured notice for the agent
+      const ultimateError = detectHttpOrBrowserError(tabUrl, tabTitle, '');
+      return {
+        url: tabUrl,
+        title: tabTitle || 'Unreachable or Restricted Page',
+        elements: [],
+        snapshotText: `[PAGE LOAD / BROWSER NOTICE]:
+URL: ${tabUrl}
+Title: ${tabTitle || 'Unknown'}
+Status: The browser could not inspect page elements (${msgErr?.message || 'Content script unavailable'}).
+${ultimateError.isError ? `Detected Error: ${ultimateError.type} (${ultimateError.detail}).` : 'The page may still be loading, restricted, or an internal error screen.'}
+Directive for Agent: Do not halt execution. If you need content from this site, navigate to an alternate URL or search engine, or call "ask_user" if you are blocked.`,
+        bodySnippet: tabTitle || 'Unreachable page',
+        isErrorPage: true,
+        errorInfo: ultimateError,
+      };
+    }
+
+    // 4. Content script responded successfully!
+    // Detect if page content or title indicates an HTTP error (404, 503, 529, 429, etc.)
+    const pageError = detectHttpOrBrowserError(
+      contentRes.url || tabUrl,
+      contentRes.title || tabTitle,
+      contentRes.bodySnippet || ''
+    );
+
+    return {
+      ...contentRes,
+      isErrorPage: pageError.isError,
+      errorInfo: pageError,
+    };
   }
 
   private async executeDOMAction(tabId: number, toolName: string, args: Record<string, any>): Promise<any> {
@@ -488,9 +551,20 @@ export class AgentExecution {
         try {
           snapshot = await this.getPageSnapshot(tabId, showVisualLabels);
         } catch (err: any) {
-          this.callbacks.onLog?.(`Retrying page observation on tab #${tabId}: ${err.message}`);
-          await this.sleep(1500);
-          snapshot = await this.getPageSnapshot(tabId, showVisualLabels);
+          this.callbacks.onLog?.(`Recovering page observation on tab #${tabId}: ${err.message}`);
+          await this.sleep(1000);
+          try {
+            snapshot = await this.getPageSnapshot(tabId, showVisualLabels);
+          } catch (recErr: any) {
+            snapshot = {
+              url: 'about:blank',
+              title: 'Observation recovery',
+              elements: [],
+              snapshotText: `[PAGE OBSERVATION NOTICE]: Could not capture live elements: ${recErr?.message || 'Page unavailable'}.`,
+              bodySnippet: 'Page observation unavailable',
+              isErrorPage: true,
+            };
+          }
         }
 
         let elementsList = snapshot.snapshotText || 'No visible interactive elements detected.';
@@ -548,7 +622,28 @@ STRICT REQUIREMENT - DECISION MATRIX:
           }
         }
 
-        let observationContent = `${prioritySteeringPrompt}${failureAlertBlock}[CURRENT PAGE OBSERVATION]
+        // HTTP / Browser Page Error Notice Block
+        let pageErrorNotice = '';
+        if (snapshot.isErrorPage && snapshot.errorInfo?.isError) {
+          pageErrorNotice = `\
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ ⚠️ HTTP / PAGE ERROR DETECTED ON CURRENT TAB: ${snapshot.errorInfo.type}
+╠══════════════════════════════════════════════════════════════════════════════╣
+║ Details: ${snapshot.errorInfo.detail}
+║ Page Title: "${snapshot.title}"
+║ URL: ${snapshot.url}
+╚══════════════════════════════════════════════════════════════════════════════╝
+CRITICAL DIRECTIVES FOR HANDLING THIS ERROR:
+1. The webpage returned an error (${snapshot.errorInfo.type}). Interactive elements are likely unavailable.
+2. DO NOT repeatedly click or type into missing elements on this error page.
+3. If this is a temporary rate-limit or server overload (e.g. 503, 529, 429), use "wait" to pause or navigate to an alternate search/URL.
+4. If this is a 404 (Not Found) or DNS failure, navigate to a search engine (like google.com or bing.com) to find a working link, or try an alternate URL.
+5. If you cannot proceed without user intervention, call "ask_user" to explain the situation.\n\n`;
+        } else if (snapshot.bodySnippet && (!snapshot.elements || snapshot.elements.length === 0)) {
+          pageErrorNotice = `[PAGE TEXT SNIPPET]:\n"${snapshot.bodySnippet.slice(0, 500)}"\n\n`;
+        }
+
+        let observationContent = `${prioritySteeringPrompt}${failureAlertBlock}${pageErrorNotice}[CURRENT PAGE OBSERVATION]
 Tab ID: ${tabId}
 URL: ${snapshot.url}
 Title: ${snapshot.title}
