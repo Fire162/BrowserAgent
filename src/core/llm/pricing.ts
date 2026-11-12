@@ -9,11 +9,21 @@ export function estimateCostUSD(
   reportedCost?: number,
   cachedTokens = 0
 ): number {
-  if (typeof reportedCost === 'number' && reportedCost > 0) {
+  // 1. If provider explicitly reported a cost (including 0 for free tier models)
+  if (typeof reportedCost === 'number' && reportedCost >= 0) {
     return reportedCost;
   }
 
   const modelLower = (modelId || '').toLowerCase();
+
+  // 2. Explicit free models (e.g. openrouter/free, :free suffix, free tier)
+  if (
+    modelLower === 'openrouter/free' ||
+    modelLower.endsWith(':free') ||
+    modelLower.includes('/free')
+  ) {
+    return 0;
+  }
 
   // Check if model belongs to the budget / lightweight tier
   const isBudget =
