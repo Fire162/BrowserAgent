@@ -183,7 +183,7 @@ export const App: React.FC = () => {
 
     updateActiveTab();
 
-    const handleActivated = (activeInfo: chrome.tabs.TabActiveInfo) => {
+    const handleActivated = (activeInfo: chrome.tabs.OnActivatedInfo) => {
       if (isRunning || hasActiveSession) return;
       chrome.tabs.get(activeInfo.tabId, (tab) => {
         if (chrome.runtime.lastError || !tab) return;
@@ -198,7 +198,7 @@ export const App: React.FC = () => {
       });
     };
 
-    const handleUpdated = (tabId: number, changeInfo: chrome.tabs.TabChangeInfo, tab: chrome.tabs.Tab) => {
+    const handleUpdated = (tabId: number, changeInfo: chrome.tabs.OnUpdatedInfo, tab: chrome.tabs.Tab) => {
       if (isRunning || hasActiveSession) return;
       if (tab.active && (changeInfo.status === 'complete' || changeInfo.title || changeInfo.url)) {
         const tabInfo: TargetTabInfo = {

@@ -682,7 +682,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   // 16. Content Script Injection check
   if (action === 'ensure_content_script') {
     const { tabId } = params || {};
-    chrome.tabs.sendMessage(tabId, { action: 'ping' }, (res) => {
+    chrome.tabs.sendMessage(tabId, { action: 'ping' }, (res: any) => {
       if (chrome.runtime.lastError || !res) {
         chrome.scripting.executeScript(
           {

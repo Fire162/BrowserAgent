@@ -83,7 +83,7 @@ export function performClick(params: { elementId?: string | number; selector?: s
 
   el.dispatchEvent(new PointerEvent('pointerdown', mouseOpts));
   el.dispatchEvent(new MouseEvent('mousedown', mouseOpts));
-  el.focus();
+  try { el.focus(); } catch {}
   el.dispatchEvent(new PointerEvent('pointerup', mouseOpts));
   el.dispatchEvent(new MouseEvent('mouseup', mouseOpts));
   el.dispatchEvent(new MouseEvent('click', mouseOpts));

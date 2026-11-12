@@ -147,7 +147,18 @@ export async function performTabNavigation(tabId: number, url: string): Promise<
       return;
     }
 
-    chrome.tabs.update(tabId, { url }, () => {
+    let targetUrl = (url || '').trim();
+    if (
+      !targetUrl.startsWith('http://') &&
+      !targetUrl.startsWith('https://') &&
+      !targetUrl.startsWith('chrome://') &&
+      !targetUrl.startsWith('edge://') &&
+      !targetUrl.startsWith('about:')
+    ) {
+      targetUrl = `https://${targetUrl}`;
+    }
+
+    chrome.tabs.update(tabId, { url: targetUrl }, () => {
       if (chrome.runtime.lastError) {
         resolve({ success: false, error: chrome.runtime.lastError.message });
         return;
@@ -156,11 +167,15 @@ export async function performTabNavigation(tabId: number, url: string): Promise<
       let finished = false;
 
       // Wait for page load completion and verify if page loaded or hit an error
-      const listener = (tid: number, changeInfo: chrome.tabs.TabChangeInfo) => {
+      const listener = (tid: number, changeInfo: chrome.tabs.OnUpdatedInfo) => {
         if (tid === tabId && changeInfo.status === 'complete' && !finished) {
           finished = true;
           chrome.tabs.onUpdated.removeListener(listener);
           chrome.tabs.get(tabId, (finalTab) => {
+            if (chrome.runtime.lastError || !finalTab) {
+              resolve({ success: false, error: 'Target tab was closed or is unreachable.' });
+              return;
+            }
             const tabUrl = finalTab?.url || '';
             const tabTitle = finalTab?.title || '';
             const detectedErr = detectHttpOrBrowserError(tabUrl, tabTitle);
@@ -168,7 +183,7 @@ export async function performTabNavigation(tabId: number, url: string): Promise<
             if (detectedErr.isError) {
               resolve({
                 success: false,
-                error: `Failed to load ${url}: ${detectedErr.type} - ${detectedErr.detail} (${finalTab?.title || 'Error'}).`,
+                error: `Failed to load ${targetUrl}: ${detectedErr.type} - ${detectedErr.detail} (${finalTab?.title || 'Error'}).`,
                 isErrorPage: true,
                 errorInfo: detectedErr,
                 tab: finalTab,
@@ -187,6 +202,10 @@ export async function performTabNavigation(tabId: number, url: string): Promise<
         finished = true;
         chrome.tabs.onUpdated.removeListener(listener);
         chrome.tabs.get(tabId, (finalTab) => {
+          if (chrome.runtime.lastError || !finalTab) {
+            resolve({ success: false, error: 'Navigation timed out: tab closed or unreachable.' });
+            return;
+          }
           const tabUrl = finalTab?.url || '';
           const tabTitle = finalTab?.title || '';
           const detectedErr = detectHttpOrBrowserError(tabUrl, tabTitle);
@@ -194,7 +213,7 @@ export async function performTabNavigation(tabId: number, url: string): Promise<
           if (detectedErr.isError) {
             resolve({
               success: false,
-              error: `Navigation timed out for ${url}: ${detectedErr.type} (${finalTab?.title || 'Cannot be reached'}).`,
+              error: `Navigation timed out for ${targetUrl}: ${detectedErr.type} (${finalTab?.title || 'Cannot be reached'}).`,
               isErrorPage: true,
               errorInfo: detectedErr,
               tab: finalTab,
