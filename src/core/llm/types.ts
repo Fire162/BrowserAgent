@@ -60,6 +60,7 @@ export interface ChatMessage {
   imageUrl?: string; // Optional base64 data URL (e.g., data:image/jpeg;base64,...)
   toolCalls?: ToolCall[];
   toolCallId?: string;
+  toolName?: string;
   timestamp?: number;
 }
 

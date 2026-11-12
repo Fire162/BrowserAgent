@@ -30,29 +30,33 @@ export async function callAnthropic(
 
   for (const m of chatMessages) {
     if (m.role === 'user') {
+      const userBlocks: any[] = [];
       if (m.imageUrl) {
         const { mimeType, data } = parseDataUrl(m.imageUrl);
-        formattedMessages.push({
-          role: 'user',
-          content: [
-            {
-              type: 'image',
-              source: {
-                type: 'base64',
-                media_type: mimeType,
-                data: data,
-              },
-            },
-            {
-              type: 'text',
-              text: m.content,
-            },
-          ],
+        userBlocks.push({
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: mimeType,
+            data: data,
+          },
         });
+      }
+      userBlocks.push({
+        type: 'text',
+        text: m.content,
+      });
+
+      const last = formattedMessages[formattedMessages.length - 1];
+      if (last && last.role === 'user') {
+        if (typeof last.content === 'string') {
+          last.content = [{ type: 'text', text: last.content }];
+        }
+        last.content.push(...userBlocks);
       } else {
         formattedMessages.push({
           role: 'user',
-          content: m.content,
+          content: userBlocks,
         });
       }
     } else if (m.role === 'assistant') {
@@ -92,16 +96,24 @@ export async function callAnthropic(
         text: m.content,
       });
 
-      formattedMessages.push({
-        role: 'user',
-        content: [
-          {
-            type: 'tool_result',
-            tool_use_id: m.toolCallId || '',
-            content: toolContentBlocks,
-          },
-        ],
-      });
+      const toolResultBlock = {
+        type: 'tool_result',
+        tool_use_id: m.toolCallId || '',
+        content: toolContentBlocks,
+      };
+
+      const last = formattedMessages[formattedMessages.length - 1];
+      if (last && last.role === 'user') {
+        if (typeof last.content === 'string') {
+          last.content = [{ type: 'text', text: last.content }];
+        }
+        last.content.push(toolResultBlock);
+      } else {
+        formattedMessages.push({
+          role: 'user',
+          content: [toolResultBlock],
+        });
+      }
     }
   }
 

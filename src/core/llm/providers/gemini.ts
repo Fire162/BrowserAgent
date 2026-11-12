@@ -26,7 +26,11 @@ export async function callGemini(
   const systemMessage = messages.find((m) => m.role === 'system');
   const chatMessages = messages.filter((m) => m.role !== 'system');
 
-  const contents = chatMessages.map((m) => {
+  const contents: any[] = [];
+
+  for (let i = 0; i < chatMessages.length; i++) {
+    const m = chatMessages[i];
+
     if (m.role === 'assistant') {
       const parts: any[] = [];
       if (m.content) {
@@ -37,47 +41,73 @@ export async function callGemini(
           parts.push({
             functionCall: {
               name: tc.name,
-              args: tc.arguments,
+              args: tc.arguments || {},
             },
           });
         });
       }
-      return {
+      contents.push({
         role: 'model',
         parts: parts.length > 0 ? parts : [{ text: '' }],
-      };
-    }
-
-    if (m.role === 'tool') {
-      return {
-        role: 'user',
-        parts: [
-          {
-            functionResponse: {
-              name: m.toolCallId || 'tool_response',
-              response: { result: m.content },
-            },
-          },
-        ],
-      };
-    }
-
-    const userParts: any[] = [{ text: m.content }];
-    if (m.imageUrl) {
-      const { mimeType, data } = parseDataUrl(m.imageUrl);
-      userParts.push({
-        inlineData: {
-          mimeType,
-          data,
-        },
       });
-    }
+    } else if (m.role === 'tool') {
+      // Find actual tool function name matching Gemini functionDeclarations
+      let fnName = m.toolName;
+      if (!fnName && m.toolCallId) {
+        for (let j = i - 1; j >= 0; j--) {
+          const prev = chatMessages[j];
+          if (prev.role === 'assistant' && prev.toolCalls) {
+            const match = prev.toolCalls.find((tc) => tc.id === m.toolCallId);
+            if (match) {
+              fnName = match.name;
+              break;
+            }
+          }
+        }
+      }
+      fnName = fnName || 'action';
 
-    return {
-      role: 'user',
-      parts: userParts,
-    };
-  });
+      const part = {
+        functionResponse: {
+          name: fnName,
+          response: { result: m.content },
+        },
+      };
+
+      // Merge consecutive tool responses into the same user turn
+      const lastContent = contents[contents.length - 1];
+      if (lastContent && lastContent.role === 'user' && lastContent.parts.some((p: any) => p.functionResponse)) {
+        lastContent.parts.push(part);
+      } else {
+        contents.push({
+          role: 'user',
+          parts: [part],
+        });
+      }
+    } else if (m.role === 'user') {
+      const userParts: any[] = [{ text: m.content }];
+      if (m.imageUrl) {
+        const { mimeType, data } = parseDataUrl(m.imageUrl);
+        userParts.push({
+          inlineData: {
+            mimeType,
+            data,
+          },
+        });
+      }
+
+      // If preceding turn is also user (e.g. tool response), merge to preserve strict user/model alternation
+      const lastContent = contents[contents.length - 1];
+      if (lastContent && lastContent.role === 'user') {
+        lastContent.parts.push(...userParts);
+      } else {
+        contents.push({
+          role: 'user',
+          parts: userParts,
+        });
+      }
+    }
+  }
 
   const functionDeclarations = tools.map((t) => ({
     name: t.name,
@@ -130,12 +160,13 @@ export async function callGemini(
   let text = '';
   const toolCalls: any[] = [];
 
-  parts.forEach((p: any) => {
+  parts.forEach((p: any, idx: number) => {
     if (p.text) {
       text += p.text;
     }
     if (p.functionCall) {
       toolCalls.push({
+        id: `call_${Date.now()}_${idx}`,
         name: p.functionCall.name,
         arguments: p.functionCall.args || {},
       });

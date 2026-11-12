@@ -160,6 +160,20 @@ function isInteractiveElement(el: HTMLElement): boolean {
   return false;
 }
 
+function isPositionFixed(el: HTMLElement): boolean {
+  let curr: HTMLElement | null = el;
+  while (curr && curr !== document.body && curr !== document.documentElement) {
+    try {
+      const pos = window.getComputedStyle(curr).position;
+      if (pos === 'fixed') return true;
+    } catch {
+      break;
+    }
+    curr = curr.parentElement;
+  }
+  return false;
+}
+
 export function scanAndLabelElements(showVisualBadges = true): { elements: ElementDescriptor[]; snapshotText: string } {
   clearBadges();
 
@@ -247,9 +261,10 @@ export function scanAndLabelElements(showVisualBadges = true): { elements: Eleme
     if (container) {
       const badge = document.createElement('div');
       badge.textContent = String(id);
-      badge.style.position = 'absolute';
-      badge.style.top = `${rect.top + scrollY - 6}px`;
-      badge.style.left = `${rect.left + scrollX - 6}px`;
+      const isFixed = isPositionFixed(el);
+      badge.style.position = isFixed ? 'fixed' : 'absolute';
+      badge.style.top = isFixed ? `${rect.top - 6}px` : `${rect.top + scrollY - 6}px`;
+      badge.style.left = isFixed ? `${rect.left - 6}px` : `${rect.left + scrollX - 6}px`;
       badge.style.backgroundColor = '#f59e0b'; // amber-500
       badge.style.color = '#000000';
       badge.style.fontSize = '11px';

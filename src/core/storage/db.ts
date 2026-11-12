@@ -98,20 +98,70 @@ export async function loadTasks(): Promise<TaskRecord[]> {
   });
 }
 
+function sanitizeTaskForStorage(task: TaskRecord): TaskRecord {
+  return {
+    ...task,
+    steps: task.steps?.map((step) => {
+      // Keep step metadata; if screenshot is exceptionally large (>300KB), omit it from persistent storage
+      const screenshotUrl =
+        step.screenshotUrl && step.screenshotUrl.length > 300_000
+          ? undefined
+          : step.screenshotUrl;
+      return {
+        ...step,
+        screenshotUrl,
+      };
+    }),
+    messages: task.messages?.map((msg) => {
+      let content = msg.content;
+      // If content contains huge DOM representation, compress/prune for storage
+      if (typeof content === 'string' && content.length > 3000 && content.includes('Interactive Elements:')) {
+        const lines = content.split('\n');
+        const header = lines.slice(0, 8).join('\n');
+        content = `${header}\n\n... [${lines.length - 8} lines of page DOM pruned for history storage]`;
+      }
+      return {
+        ...msg,
+        content,
+        imageUrl: undefined, // Never duplicate full-resolution base64 images inside raw message storage
+      };
+    }),
+  };
+}
+
 export async function saveTask(task: TaskRecord): Promise<void> {
+  const sanitized = sanitizeTaskForStorage(task);
   const current = await loadTasks();
-  const updated = [task, ...current.filter((t) => t.id !== task.id)].slice(0, 50);
+  let updated = [sanitized, ...current.filter((t) => t.id !== task.id)].slice(0, 30);
 
   if (!isExtensionEnv) {
-    localStorage.setItem(TASKS_KEY, JSON.stringify(updated));
+    try {
+      localStorage.setItem(TASKS_KEY, JSON.stringify(updated));
+    } catch {
+      try {
+        localStorage.setItem(TASKS_KEY, JSON.stringify(updated.slice(0, 10)));
+      } catch {}
+    }
     return;
   }
 
-  return new Promise((resolve) => {
-    chrome.storage.local.set({ [TASKS_KEY]: updated }, () => {
-      resolve();
+  const trySave = (items: TaskRecord[]): Promise<void> => {
+    return new Promise((resolve) => {
+      chrome.storage.local.set({ [TASKS_KEY]: items }, () => {
+        if (chrome.runtime?.lastError) {
+          console.warn('Storage set error:', chrome.runtime.lastError.message);
+          // If quota exceeded or error, aggressively trim older tasks
+          if (items.length > 5) {
+            chrome.storage.local.set({ [TASKS_KEY]: items.slice(0, 10) }, () => resolve());
+            return;
+          }
+        }
+        resolve();
+      });
     });
-  });
+  };
+
+  await trySave(updated);
 }
 
 export async function clearTasks(): Promise<void> {

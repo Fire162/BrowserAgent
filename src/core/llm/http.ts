@@ -31,6 +31,14 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function safeHostname(rawUrl: string): string {
+  try {
+    return new URL(rawUrl.startsWith('http') ? rawUrl : `https://${rawUrl}`).hostname;
+  } catch {
+    return rawUrl;
+  }
+}
+
 export async function fetchWithRetry(
   url: string,
   options: FetchWithRetryOptions = {}
@@ -55,7 +63,7 @@ export async function fetchWithRetry(
         if (attempt > maxRetries) {
           const errBody = await res.text();
           throw new Error(
-            `Rate limit (429) exceeded after ${maxRetries} retries on ${new URL(url).hostname}. Server response: ${errBody.slice(0, 200)}`
+            `Rate limit (${res.status}) exceeded after ${maxRetries} retries on ${safeHostname(url)}. Server response: ${errBody.slice(0, 200)}`
           );
         }
 

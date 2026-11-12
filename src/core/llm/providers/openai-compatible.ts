@@ -122,19 +122,36 @@ export async function callOpenAICompatible({
     throw new Error(`${providerName} returned an empty response.`);
   }
 
-  const toolCalls = choice.message?.tool_calls?.map((tc: any) => {
+  let toolCalls = choice.message?.tool_calls?.map((tc: any) => {
     let args = {};
     try {
-      args = typeof tc.function.arguments === 'string' ? JSON.parse(tc.function.arguments) : tc.function.arguments;
+      args = typeof tc.function?.arguments === 'string' ? JSON.parse(tc.function.arguments) : (tc.function?.arguments || {});
     } catch {
-      args = { raw: tc.function.arguments };
+      args = { raw: tc.function?.arguments };
     }
     return {
       id: tc.id,
-      name: tc.function.name,
+      name: tc.function?.name,
       arguments: args,
     };
   });
+
+  if ((!toolCalls || toolCalls.length === 0) && choice.message?.function_call) {
+    const fc = choice.message.function_call;
+    let args = {};
+    try {
+      args = typeof fc.arguments === 'string' ? JSON.parse(fc.arguments) : (fc.arguments || {});
+    } catch {
+      args = { raw: fc.arguments };
+    }
+    toolCalls = [
+      {
+        id: `call_${Date.now()}`,
+        name: fc.name,
+        arguments: args,
+      },
+    ];
+  }
 
   const promptTokens = json.usage?.prompt_tokens || 0;
   const completionTokens = json.usage?.completion_tokens || 0;

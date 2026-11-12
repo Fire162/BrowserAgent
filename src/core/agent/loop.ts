@@ -924,6 +924,7 @@ What is your next action?`;
           this.messages.push({
             role: 'tool',
             toolCallId: r.id,
+            toolName: r.name,
             content: r.resultStr,
             imageUrl: r.imageUrl,
           });

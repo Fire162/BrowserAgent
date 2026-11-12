@@ -67,9 +67,9 @@ export const StepTimeline: React.FC<StepTimelineProps> = ({ steps, isRunning = f
                   ) : step.toolCall ? (
                     <span className="font-mono text-sky-300 font-medium truncate">
                       {step.toolCall.name}
-                      {step.toolCall.arguments.elementId && `(#${step.toolCall.arguments.elementId})`}
-                      {step.toolCall.arguments.text && `("${step.toolCall.arguments.text.slice(0, 15)}")`}
-                      {step.toolCall.arguments.key && `("${step.toolCall.arguments.key}")`}
+                      {step.toolCall.arguments?.elementId && `(#${step.toolCall.arguments.elementId})`}
+                      {step.toolCall.arguments?.text && `("${step.toolCall.arguments.text.slice(0, 15)}")`}
+                      {step.toolCall.arguments?.key && `("${step.toolCall.arguments.key}")`}
                     </span>
                   ) : (
                     <span className="text-slate-400 italic truncate">Observing page...</span>
