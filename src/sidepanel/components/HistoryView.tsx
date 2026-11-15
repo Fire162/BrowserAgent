@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { History, Trash2, CheckCircle, XCircle, Clock, ArrowRight, MessageSquare, Play, Download, FileText } from 'lucide-react';
 import { loadTasks, clearTasks, TaskRecord } from '../../core/storage/db';
 import { MarkdownViewer } from './MarkdownViewer';
+import { StepTimeline } from './StepTimeline';
 
 interface HistoryViewProps {
   onRerunTask: (goal: string) => void;
@@ -11,17 +12,22 @@ interface HistoryViewProps {
 export const HistoryView: React.FC<HistoryViewProps> = ({ onRerunTask, onResumeTaskInChat }) => {
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
   const [selectedTask, setSelectedTask] = useState<TaskRecord | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
 
   useEffect(() => {
     loadTasks().then(setTasks);
   }, []);
 
   const handleClear = async () => {
-    if (confirm('Clear all task history?')) {
-      await clearTasks();
-      setTasks([]);
-      setSelectedTask(null);
+    if (!confirmClear) {
+      setConfirmClear(true);
+      setTimeout(() => setConfirmClear(false), 3000);
+      return;
     }
+    await clearTasks();
+    setTasks([]);
+    setSelectedTask(null);
+    setConfirmClear(false);
   };
 
   const formatDate = (ts: number) => {
@@ -39,10 +45,14 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onRerunTask, onResumeT
         {tasks.length > 0 && (
           <button
             onClick={handleClear}
-            className="text-slate-400 hover:text-rose-400 flex items-center gap-1 text-[11px] transition-colors"
+            className={`flex items-center gap-1 text-[11px] px-2 py-0.5 rounded transition-colors ${
+              confirmClear
+                ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40 font-bold'
+                : 'text-slate-400 hover:text-rose-400'
+            }`}
           >
             <Trash2 className="h-3 w-3" />
-            <span>Clear</span>
+            <span>{confirmClear ? 'Confirm Clear?' : 'Clear'}</span>
           </button>
         )}
       </div>
@@ -108,6 +118,13 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ onRerunTask, onResumeT
                 <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800">
                   <MarkdownViewer content={selectedTask.resultSummary} className="text-[11px]" />
                 </div>
+              </div>
+            )}
+
+            {selectedTask.steps && selectedTask.steps.length > 0 && (
+              <div className="space-y-1 pt-1">
+                <span className="text-[11px] font-semibold text-slate-400 block">Execution Steps ({selectedTask.steps.length}):</span>
+                <StepTimeline steps={selectedTask.steps} />
               </div>
             )}
 

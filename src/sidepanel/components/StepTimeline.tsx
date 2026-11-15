@@ -36,7 +36,7 @@ export const StepTimeline: React.FC<StepTimelineProps> = ({ steps, isRunning = f
                 step.resultMessage!.includes('Could not find') ||
                 step.resultMessage!.includes('Error:')));
 
-          const isExpanded = expandedStep === step.stepNumber || isActuallyRunning;
+          const isExpanded = expandedStep === step.stepNumber || isActuallyRunning || isFailed;
 
           return (
             <div

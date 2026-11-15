@@ -30,5 +30,6 @@ At every step, you are provided with:
     - **404 Not Found / DNS failure**: Do not stay on the broken page or try to click missing elements. Pivot immediately by using \`navigate\` to a search engine (e.g. google.com or bing.com) to search for alternate URLs, or navigate directly to a working site.
     - **503 / 529 / 429 (Service Overloaded or Rate-Limited)**: Call \`wait\` (e.g. 3-5 seconds) to give the server a chance to recover, or pivot to an alternate search engine or resource.
     - **Restricted / Challenge Pages**: If access is blocked or requires human action, call \`ask_user\` rather than looping.
+13. **Scheduling Tasks**: If the user asks to run a task in the future or periodically (e.g. "Check this page in 30 minutes", "Monitor this price every hour", "Run this search at a later time"), call \`schedule_task\` with the goal, delayInMinutes, and optional periodInMinutes. You can also view active alarms with \`list_schedules\` and cancel them with \`cancel_schedule\`.
 
 Think carefully about the current state, reason what step is needed next, and execute your chosen tool!`;

@@ -16,8 +16,21 @@ export interface TaskRecord {
   completedAt?: number;
 }
 
+export interface ScheduleRecord {
+  id: string; // e.g. schedule_1731671234
+  goal: string;
+  delayInMinutes: number;
+  periodInMinutes?: number;
+  createdAt: number;
+  nextRunAt: number;
+  status: 'active' | 'completed' | 'cancelled';
+  lastRunAt?: number;
+  lastSummary?: string;
+}
+
 const SETTINGS_KEY = 'browseragent_settings';
 const TASKS_KEY = 'browseragent_tasks';
+const SCHEDULES_KEY = 'browseragent_schedules';
 
 // Check if chrome.storage is available
 const isExtensionEnv = typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local;
@@ -174,5 +187,59 @@ export async function clearTasks(): Promise<void> {
     chrome.storage.local.remove([TASKS_KEY], () => {
       resolve();
     });
+  });
+}
+
+export async function loadSchedules(): Promise<ScheduleRecord[]> {
+  if (!isExtensionEnv) {
+    try {
+      const raw = localStorage.getItem(SCHEDULES_KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  return new Promise((resolve) => {
+    chrome.storage.local.get([SCHEDULES_KEY], (res) => {
+      if (res && res[SCHEDULES_KEY]) {
+        try {
+          const list = typeof res[SCHEDULES_KEY] === 'string' ? JSON.parse(res[SCHEDULES_KEY]) : res[SCHEDULES_KEY];
+          resolve(Array.isArray(list) ? list : []);
+        } catch {
+          resolve([]);
+        }
+      } else {
+        resolve([]);
+      }
+    });
+  });
+}
+
+export async function saveSchedule(schedule: ScheduleRecord): Promise<void> {
+  const current = await loadSchedules();
+  const updated = [schedule, ...current.filter((s) => s.id !== schedule.id)].slice(0, 30);
+
+  if (!isExtensionEnv) {
+    localStorage.setItem(SCHEDULES_KEY, JSON.stringify(updated));
+    return;
+  }
+
+  return new Promise((resolve) => {
+    chrome.storage.local.set({ [SCHEDULES_KEY]: updated }, () => resolve());
+  });
+}
+
+export async function deleteSchedule(scheduleId: string): Promise<void> {
+  const current = await loadSchedules();
+  const updated = current.filter((s) => s.id !== scheduleId);
+
+  if (!isExtensionEnv) {
+    localStorage.setItem(SCHEDULES_KEY, JSON.stringify(updated));
+    return;
+  }
+
+  return new Promise((resolve) => {
+    chrome.storage.local.set({ [SCHEDULES_KEY]: updated }, () => resolve());
   });
 }

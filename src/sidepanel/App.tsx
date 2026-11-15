@@ -7,6 +7,7 @@ import { useSettings } from './hooks/useSettings';
 import { StepRecord, TargetTabInfo, BudgetLimitDecision } from '../core/agent/loop';
 import { TaskRecord } from '../core/storage/db';
 import { PROVIDERS } from '../core/llm/providers/registry';
+import { playNotificationChime } from '../core/utils/notifications';
 
 export interface ChatTurn {
   id: string;
@@ -45,6 +46,7 @@ export const App: React.FC = () => {
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
   const [pendingBudgetLimit, setPendingBudgetLimit] = useState<BudgetLimitEvent | null>(null);
   const [targetTab, setTargetTab] = useState<TargetTabInfo | null>(null);
+  const [keyWarning, setKeyWarning] = useState<string | null>(null);
 
   const cachedMessagesRef = useRef<any[]>([]);
 
@@ -142,6 +144,9 @@ export const App: React.FC = () => {
             break;
           case 'TARGET_TAB_CHANGED':
             if (event.info) setTargetTab(event.info);
+            break;
+          case 'PLAY_CHIME':
+            playNotificationChime();
             break;
         }
       }
@@ -297,10 +302,11 @@ export const App: React.FC = () => {
 
   const handleStartTask = async (goal: string) => {
     if (activeDef.requiresApiKey && !activeConfig.apiKey?.trim()) {
-      alert(`Please enter an API Key for ${activeDef.name} in Settings before running tasks.`);
+      setKeyWarning(`API Key required for ${activeDef.name}. Please enter your key below to get started.`);
       setCurrentTab('settings');
       return;
     }
+    setKeyWarning(null);
 
     const initialTurn: ChatTurn = {
       id: `turn_${Date.now()}`,
@@ -331,6 +337,22 @@ export const App: React.FC = () => {
         targetTabId: targetTab?.id,
       },
     });
+  };
+
+  const handleAbortTask = () => {
+    setIsRunning(false);
+    setIsPaused(false);
+    setLiveStatus('Task stopped by user.');
+    chrome.runtime.sendMessage({ action: 'abort_task' });
+  };
+
+  const handleUseFreeModels = () => {
+    setActiveProvider('openrouter');
+    updateProviderConfig('openrouter', {
+      selectedModel: 'meta-llama/llama-3.3-70b-instruct:free',
+      customModelId: '',
+    });
+    setKeyWarning(null);
   };
 
   const handlePauseTask = () => {
@@ -450,6 +472,7 @@ export const App: React.FC = () => {
             hasActiveSession={hasActiveSession}
             onStartTask={handleStartTask}
             onPauseTask={handlePauseTask}
+            onAbortTask={handleAbortTask}
             onResumeTask={handleResumeTask}
             onSendSteering={handleSendSteering}
             onNewChat={handleNewChat}
@@ -462,6 +485,9 @@ export const App: React.FC = () => {
             liveStatus={liveStatus}
             activeProvider={activeDef.name}
             activeModel={currentModel}
+            hasApiKey={Boolean(activeConfig.apiKey?.trim()) || !activeDef.requiresApiKey}
+            onSelectTab={setCurrentTab}
+            onUseFreeModels={handleUseFreeModels}
             pendingQuestion={pendingQuestion}
             onAnswerQuestion={handleAnswerQuestion}
             pendingBudgetLimit={pendingBudgetLimit}
@@ -479,6 +505,8 @@ export const App: React.FC = () => {
             onSetActiveProvider={setActiveProvider}
             onUpdateProvider={updateProviderConfig}
             onUpdateAgent={updateAgentConfig}
+            warningBanner={keyWarning}
+            onClearWarning={() => setKeyWarning(null)}
           />
         )}
 

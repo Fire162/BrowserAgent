@@ -3,6 +3,7 @@ import {
   Send,
   Pause,
   Play,
+  Square,
   Sparkles,
   Copy,
   Check,
@@ -19,6 +20,10 @@ import {
   User,
   Bot,
   Coins,
+  Key,
+  AlertTriangle,
+  ChevronDown,
+  CalendarClock,
 } from 'lucide-react';
 import { TargetTabInfo, BudgetLimitDecision } from '../../core/agent/loop';
 import { StepTimeline } from './StepTimeline';
@@ -31,6 +36,7 @@ interface ChatViewProps {
   hasActiveSession: boolean;
   onStartTask: (goal: string) => void;
   onPauseTask: () => void;
+  onAbortTask?: () => void;
   onResumeTask: (followUp: string) => void;
   onSendSteering: (guidance: string) => void;
   onNewChat: () => void;
@@ -43,6 +49,9 @@ interface ChatViewProps {
   liveStatus: string;
   activeProvider: string;
   activeModel: string;
+  hasApiKey?: boolean;
+  onSelectTab?: (tab: any) => void;
+  onUseFreeModels?: () => void;
   pendingQuestion?: string | null;
   onAnswerQuestion?: (answer: string) => void;
   pendingBudgetLimit?: BudgetLimitEvent | null;
@@ -57,7 +66,7 @@ const QUICK_PROMPTS = [
   'Extract all product titles and prices on this page',
   'Summarize the core takeaways of this article into bullet points',
   'Find the search bar, search for "Quantum Computing", and report the first 3 links',
-  'Fill out the form fields on this page with realistic sample data',
+  'Check this page in 15 minutes and summarize any new updates',
 ];
 
 export const ChatView: React.FC<ChatViewProps> = ({
@@ -66,6 +75,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
   hasActiveSession,
   onStartTask,
   onPauseTask,
+  onAbortTask,
   onResumeTask,
   onSendSteering,
   onNewChat,
@@ -78,6 +88,9 @@ export const ChatView: React.FC<ChatViewProps> = ({
   liveStatus,
   activeProvider,
   activeModel,
+  hasApiKey = true,
+  onSelectTab,
+  onUseFreeModels,
   pendingQuestion,
   onAnswerQuestion,
   pendingBudgetLimit,
@@ -91,6 +104,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
   const [answerInput, setAnswerInput] = useState('');
   const [customBudgetInput, setCustomBudgetInput] = useState('');
   const [steeringToast, setSteeringToast] = useState(false);
+  const [showExportMenu, setShowExportMenu] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [thinkingSeconds, setThinkingSeconds] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -345,8 +359,8 @@ export const ChatView: React.FC<ChatViewProps> = ({
   return (
     <div className="flex-1 flex flex-col h-[calc(100vh-85px)] overflow-hidden">
       {/* Target Tab Binding & Session Control Bar */}
-      <div className="mx-3.5 mt-2 mb-1 bg-slate-900/90 border border-slate-800 rounded-xl px-3 py-1.5 flex items-center justify-between text-[11px] shadow-sm">
-        <div className="flex items-center gap-2 min-w-0 flex-1">
+      <div className="mx-3.5 mt-2 mb-1 bg-slate-900/90 border border-slate-800 rounded-xl px-2.5 py-1.5 flex items-center justify-between text-[11px] shadow-sm relative">
+        <div className="flex items-center gap-1.5 min-w-0 flex-1 mr-2">
           <span className="h-2 w-2 rounded-full bg-emerald-400 shrink-0 animate-pulse" />
           <span className="font-mono text-sky-400 shrink-0 font-medium">
             {targetTab ? `Tab #${targetTab.id}` : 'Detecting...'}
@@ -356,41 +370,66 @@ export const ChatView: React.FC<ChatViewProps> = ({
           </span>
         </div>
 
-        <div className="flex items-center gap-1.5 shrink-0 ml-2">
+        <div className="flex items-center gap-1 shrink-0">
           {targetTab && onFocusTab && (
             <button
               type="button"
               onClick={onFocusTab}
               title="Bring assigned target tab to front"
-              className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-sky-300 text-[10px] flex items-center gap-1 transition-colors border border-slate-700/60 font-medium"
+              className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-sky-300 text-[10px] flex items-center transition-colors border border-slate-700/60"
             >
               <Eye className="h-3 w-3" />
-              <span>Focus Tab</span>
+            </button>
+          )}
+
+          {!isRunning && onCreateNewTab && (
+            <button
+              type="button"
+              onClick={onCreateNewTab}
+              title="Open a brand new tab for the agent"
+              className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] flex items-center transition-colors border border-slate-700/60"
+            >
+              <Plus className="h-3 w-3" />
             </button>
           )}
 
           {turns.length > 0 && (
-            <>
+            <div className="relative">
               <button
                 type="button"
-                onClick={handleExportFullSessionMarkdown}
-                title="Export entire conversation & all metadata as Markdown (.MD)"
+                onClick={() => setShowExportMenu(!showExportMenu)}
+                title="Export session transcript"
                 className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-sky-300 hover:text-white text-[10px] flex items-center gap-1 transition-colors border border-slate-700/60 font-medium"
               >
                 <Download className="h-3 w-3 text-sky-400" />
-                <span>Export .MD</span>
+                <span>Export</span>
+                <ChevronDown className="h-2.5 w-2.5 opacity-70" />
               </button>
 
-              <button
-                type="button"
-                onClick={handleExportFullSessionJSON}
-                title="Export entire conversation & all metadata as JSON (.JSON)"
-                className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-emerald-300 hover:text-white text-[10px] flex items-center gap-1 transition-colors border border-slate-700/60 font-medium"
-              >
-                <FileText className="h-3 w-3 text-emerald-400" />
-                <span>Export .JSON</span>
-              </button>
-            </>
+              {showExportMenu && (
+                <div
+                  className="absolute right-0 top-full mt-1 w-36 bg-slate-900 border border-slate-700 rounded-lg shadow-xl z-30 py-1 text-[11px] animate-fade-in"
+                  onClick={() => setShowExportMenu(false)}
+                >
+                  <button
+                    type="button"
+                    onClick={handleExportFullSessionMarkdown}
+                    className="w-full px-2.5 py-1.5 text-left text-sky-300 hover:bg-slate-800 hover:text-white flex items-center gap-1.5 transition-colors"
+                  >
+                    <FileText className="h-3 w-3" />
+                    <span>Markdown (.md)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleExportFullSessionJSON}
+                    className="w-full px-2.5 py-1.5 text-left text-emerald-300 hover:bg-slate-800 hover:text-white flex items-center gap-1.5 border-t border-slate-800 transition-colors"
+                  >
+                    <Download className="h-3 w-3" />
+                    <span>JSON (.json)</span>
+                  </button>
+                </div>
+              )}
+            </div>
           )}
 
           {hasActiveSession && onNewChat && (
@@ -401,19 +440,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
               className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-[10px] flex items-center gap-1 transition-colors border border-slate-700/60 font-medium"
             >
               <RotateCcw className="h-3 w-3 text-sky-400" />
-              <span>New Chat</span>
-            </button>
-          )}
-
-          {!isRunning && onCreateNewTab && (
-            <button
-              type="button"
-              onClick={onCreateNewTab}
-              title="Open a brand new tab for the agent"
-              className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] flex items-center gap-1 transition-colors border border-slate-700/60"
-            >
-              <Plus className="h-3 w-3" />
-              <span>New Tab</span>
+              <span>New</span>
             </button>
           )}
         </div>
@@ -424,6 +451,47 @@ export const ChatView: React.FC<ChatViewProps> = ({
         {/* Welcome State when no conversation has started */}
         {turns.length === 0 && (
           <div className="space-y-4 pt-2">
+            {!hasApiKey && (
+              <div className="bg-gradient-to-r from-amber-500/15 via-amber-500/10 to-slate-900 border border-amber-500/40 rounded-2xl p-3.5 space-y-2.5 animate-fade-in shadow-lg shadow-amber-500/5">
+                <div className="flex items-start gap-2.5">
+                  <div className="h-7 w-7 rounded-lg bg-amber-500/20 border border-amber-500/30 flex items-center justify-center shrink-0 mt-0.5 text-amber-400">
+                    <Key className="h-4 w-4" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-bold text-amber-300">API Key Required for {activeProvider}</span>
+                      <span className="text-[9px] bg-amber-500/20 text-amber-300 px-1.5 py-0.2 rounded border border-amber-500/30 font-mono">BYOK</span>
+                    </div>
+                    <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                      Enter your {activeProvider} API key in Settings, or switch to <strong>OpenRouter</strong> to use free models without payment.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 pt-1 border-t border-slate-800">
+                  {onSelectTab && (
+                    <button
+                      type="button"
+                      onClick={() => onSelectTab('settings')}
+                      className="px-3 py-1 bg-amber-500 hover:bg-amber-400 text-black font-semibold text-xs rounded-lg transition-colors flex items-center gap-1 shadow-sm"
+                    >
+                      <span>Configure Key</span>
+                      <ArrowRight className="h-3 w-3" />
+                    </button>
+                  )}
+                  {onUseFreeModels && (
+                    <button
+                      type="button"
+                      onClick={onUseFreeModels}
+                      className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-sky-300 text-xs rounded-lg border border-slate-700 transition-colors flex items-center gap-1"
+                    >
+                      <Sparkles className="h-3 w-3 text-sky-400" />
+                      <span>Use Free Models</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
             <div className="text-center py-6 px-4 bg-slate-900/40 border border-slate-800/80 rounded-2xl">
               <div className="h-10 w-10 mx-auto rounded-xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center mb-3">
                 <Compass className="h-5 w-5 text-sky-400" />
@@ -586,13 +654,33 @@ export const ChatView: React.FC<ChatViewProps> = ({
               {/* 5. Inline Assistant Reply (ChatGPT / Claude Style) */}
               {turn.resultSummary && (
                 <div className="flex items-start gap-2.5 animate-fade-in pl-1">
-                  <div className="h-6 w-6 rounded-lg bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center shrink-0 mt-0.5 text-emerald-400">
-                    <Bot className="h-3.5 w-3.5" />
+                  <div
+                    className={`h-6 w-6 rounded-lg border flex items-center justify-center shrink-0 mt-0.5 ${
+                      turn.status === 'failed'
+                        ? 'bg-rose-500/20 border-rose-500/30 text-rose-400'
+                        : 'bg-emerald-500/20 border-emerald-500/30 text-emerald-400'
+                    }`}
+                  >
+                    {turn.status === 'failed' ? (
+                      <AlertTriangle className="h-3.5 w-3.5" />
+                    ) : (
+                      <Bot className="h-3.5 w-3.5" />
+                    )}
                   </div>
-                  <div className="flex-1 min-w-0 bg-slate-900/90 border border-slate-800/90 rounded-2xl rounded-tl-sm p-3.5 space-y-2.5 shadow-sm">
+                  <div
+                    className={`flex-1 min-w-0 border rounded-2xl rounded-tl-sm p-3.5 space-y-2.5 shadow-sm ${
+                      turn.status === 'failed'
+                        ? 'bg-rose-950/20 border-rose-500/30'
+                        : 'bg-slate-900/90 border-slate-800/90'
+                    }`}
+                  >
                     <div className="flex items-center justify-between border-b border-slate-800 pb-1.5 text-[11px]">
-                      <div className="flex items-center gap-1.5 font-medium text-slate-300">
-                        <span className="text-sky-400">BrowserAgent</span>
+                      <div className="flex items-center gap-1.5 font-medium">
+                        {turn.status === 'failed' ? (
+                          <span className="text-rose-400 font-semibold">Task Halted / Error</span>
+                        ) : (
+                          <span className="text-sky-400">BrowserAgent</span>
+                        )}
                         <span className="text-slate-600">•</span>
                         <span className="text-slate-400 font-mono">{activeModel.split('/').pop()}</span>
                       </div>
@@ -806,16 +894,19 @@ export const ChatView: React.FC<ChatViewProps> = ({
               onChange={(e) => setInputText(e.target.value)}
               placeholder={
                 isRunning && !isPaused
-                  ? "Steer agent mid-flight (Ctrl+Enter to send)..."
+                  ? "Steer agent mid-flight (Enter to send, Esc to Stop)..."
                   : isPaused
-                  ? "Task paused. Enter follow-up instruction (Ctrl+Enter)..."
+                  ? "Task paused. Enter follow-up instruction (Enter to send)..."
                   : hasActiveSession
-                  ? "Ask follow-up in this same chat (Ctrl+Enter)..."
-                  : "Give a task on assigned tab (Ctrl+Enter to start)..."
+                  ? "Ask follow-up in this chat (Enter to send, Shift+Enter for newline)..."
+                  : "Give a task on assigned tab (Enter to send, Shift+Enter for newline)..."
               }
               rows={2}
               onKeyDown={(e) => {
-                if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                if (e.key === 'Escape' && isRunning && onAbortTask) {
+                  e.preventDefault();
+                  onAbortTask();
+                } else if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
                   e.preventDefault();
                   handleSubmit();
                 } else if (e.key === 'Enter' && !e.shiftKey) {
@@ -829,6 +920,18 @@ export const ChatView: React.FC<ChatViewProps> = ({
 
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5">
+              {isRunning && onAbortTask && (
+                <button
+                  type="button"
+                  onClick={onAbortTask}
+                  title="Immediately abort task execution (Esc)"
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 bg-rose-600 hover:bg-rose-500 text-white transition-all shadow-md shadow-rose-600/20 active:scale-95 cursor-pointer"
+                >
+                  <Square className="h-3 w-3 fill-current" />
+                  <span>Stop</span>
+                </button>
+              )}
+
               {isRunning ? (
                 <button
                   type="button"

@@ -9,6 +9,8 @@ interface SettingsViewProps {
   onSetActiveProvider: (id: ProviderId) => void;
   onUpdateProvider: (id: ProviderId, updates: Partial<AllSettings['providers'][ProviderId]>) => void;
   onUpdateAgent: (updates: Partial<AllSettings['agent']>) => void;
+  warningBanner?: string | null;
+  onClearWarning?: () => void;
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
@@ -16,6 +18,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onSetActiveProvider,
   onUpdateProvider,
   onUpdateAgent,
+  warningBanner,
+  onClearWarning,
 }) => {
   const [showKey, setShowKey] = useState(false);
   const [fetchingModels, setFetchingModels] = useState(false);
@@ -23,6 +27,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [modelFilter, setModelFilter] = useState('');
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [fetchMessage, setFetchMessage] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const activeProviderId = settings.activeProvider;
   const activeDef = PROVIDERS[activeProviderId];
@@ -43,12 +48,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   const handleFetchLiveModels = async () => {
     if (activeDef.requiresApiKey && activeProviderId !== 'openrouter' && !activeConfig.apiKey?.trim()) {
-      alert(`Please enter your ${activeDef.name} API key first.`);
+      setErrorMessage(`Please enter your ${activeDef.name} API key first.`);
+      setTimeout(() => setErrorMessage(null), 3500);
       return;
     }
 
     setFetchingModels(true);
     setFetchMessage(null);
+    setErrorMessage(null);
 
     try {
       const models = await fetchLiveProviderModels(
@@ -62,10 +69,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         setFetchMessage(`Loaded ${models.length} live models directly from ${activeDef.name} API!`);
         setTimeout(() => setFetchMessage(null), 3000);
       } else {
-        alert('Endpoint returned 0 models. Check your network or API key.');
+        setErrorMessage('Endpoint returned 0 models. Check your network or API key.');
+        setTimeout(() => setErrorMessage(null), 3500);
       }
     } catch (err: any) {
-      alert(`Error fetching models from ${activeDef.name}: ${err.message}`);
+      setErrorMessage(`Error fetching models from ${activeDef.name}: ${err.message}`);
+      setTimeout(() => setErrorMessage(null), 4000);
     } finally {
       setFetchingModels(false);
     }
@@ -111,6 +120,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         <div className="fixed top-14 right-4 z-50 flex items-center gap-1.5 px-3 py-1 bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs rounded-full shadow-lg backdrop-blur animate-fade-in">
           <Check className="h-3.5 w-3.5" />
           <span>Settings saved</span>
+        </div>
+      )}
+
+      {/* Warning Banner if redirected from Chat */}
+      {warningBanner && (
+        <div className="p-3 bg-amber-500/15 border border-amber-500/35 rounded-xl text-amber-200 text-xs flex items-center justify-between animate-fade-in">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="h-4 w-4 text-amber-400 shrink-0" />
+            <span>{warningBanner}</span>
+          </div>
+          {onClearWarning && (
+            <button
+              onClick={onClearWarning}
+              className="text-amber-400 hover:text-white text-xs font-bold px-1"
+            >
+              ✕
+            </button>
+          )}
         </div>
       )}
 
@@ -254,6 +281,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           {fetchMessage && (
             <div className="text-[11px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded">
               {fetchMessage}
+            </div>
+          )}
+
+          {errorMessage && (
+            <div className="text-[11px] text-rose-400 bg-rose-500/10 border border-rose-500/20 px-2 py-1 rounded">
+              {errorMessage}
             </div>
           )}
 

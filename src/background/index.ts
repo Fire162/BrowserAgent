@@ -5,7 +5,7 @@
 
 import { AgentExecution, StepRecord, TargetTabInfo, BudgetLimitDecision } from '../core/agent/loop';
 import { performTabNavigation, performTabScreenshot } from '../core/agent/tab-ops';
-import { saveTask, TaskRecord } from '../core/storage/db';
+import { saveTask, TaskRecord, loadSchedules, saveSchedule, loadSettings } from '../core/storage/db';
 import { PROVIDERS } from '../core/llm/providers/registry';
 import { notifyToolbarBadge, clearToolbarBadge, setToolbarBadgeRunning } from '../core/utils/badge';
 import { AllSettings } from '../core/llm/types';
@@ -71,10 +71,47 @@ chrome.runtime.onInstalled.addListener(() => {
   console.log('[BrowserAgent] Extension installed & side panel configured.');
 });
 
-// Alarm listener to keep the background service worker awake during active tasks
-chrome.alarms?.onAlarm?.addListener((alarm) => {
+// Alarm listener to keep service worker awake and trigger autonomous scheduled tasks
+chrome.alarms?.onAlarm?.addListener(async (alarm) => {
   if (alarm.name === 'browseragent_keepalive') {
     chrome.storage.local.get(['_keepalive']).catch(() => {});
+    return;
+  }
+
+  // Autonomous Scheduled Task execution
+  if (alarm.name.startsWith('schedule_')) {
+    console.log(`[BrowserAgent] Alarm triggered for scheduled task: ${alarm.name}`);
+    const schedules = await loadSchedules();
+    const target = schedules.find((s) => s.id === alarm.name);
+    if (!target || target.status !== 'active') return;
+
+    const settings = await loadSettings();
+
+    let targetTabId: number | undefined;
+    try {
+      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tabs && tabs[0]?.id) {
+        targetTabId = tabs[0].id;
+      } else {
+        const newTab = await chrome.tabs.create({ url: 'https://www.google.com', active: false });
+        targetTabId = newTab.id;
+      }
+    } catch {
+      const newTab = await chrome.tabs.create({ url: 'https://www.google.com', active: false });
+      targetTabId = newTab.id;
+    }
+
+    if (target.periodInMinutes) {
+      target.lastRunAt = Date.now();
+      target.nextRunAt = Date.now() + target.periodInMinutes * 60 * 1000;
+      await saveSchedule(target);
+    } else {
+      target.lastRunAt = Date.now();
+      target.status = 'completed';
+      await saveSchedule(target);
+    }
+
+    runAgent(target.goal, settings, targetTabId);
   }
 });
 
@@ -102,6 +139,11 @@ function broadcast(event: { type: string; [key: string]: any }) {
   } catch {
     // Ignored
   }
+}
+
+function notifyUser(type: 'finish' | 'ask_user' | 'budget_limit' | 'error', details?: any) {
+  notifyToolbarBadge(type, details);
+  broadcast({ type: 'PLAY_CHIME', tone: type });
 }
 
 function finalizeSteps() {
@@ -273,17 +315,17 @@ async function runAgent(
           };
         }
         engineState.liveStatus = 'Task completed.';
-        notifyToolbarBadge('finish', { summary });
+        notifyUser('finish', { summary });
         broadcast({ type: 'FINISH', summary, turns: engineState.turns });
       },
       onError: (err) => {
         engineState.liveStatus = `Error: ${err.message}`;
-        notifyToolbarBadge('error', { error: err.message });
+        notifyUser('error', { error: err.message });
         broadcast({ type: 'ERROR', error: err.message });
       },
       onAskUser: (question: string) => {
         engineState.pendingQuestion = question;
-        notifyToolbarBadge('ask_user', { question });
+        notifyUser('ask_user', { question });
         broadcast({ type: 'ASK_USER', question });
         return new Promise<string>((resolve) => {
           userPromptResolver = resolve;
@@ -291,7 +333,7 @@ async function runAgent(
       },
       onBudgetLimitReached: (currentSpentUSD: number, currentCapUSD: number) => {
         engineState.pendingBudgetLimit = { currentSpentUSD, currentCapUSD };
-        notifyToolbarBadge('budget_limit');
+        notifyUser('budget_limit');
         broadcast({ type: 'BUDGET_LIMIT', currentSpentUSD, currentCapUSD });
         return new Promise<BudgetLimitDecision>((resolve) => {
           budgetLimitResolver = resolve;
@@ -446,17 +488,17 @@ function resumeHistoryTask(task: TaskRecord, settings: AllSettings) {
           };
         }
         engineState.liveStatus = 'Task completed.';
-        notifyToolbarBadge('finish', { summary });
+        notifyUser('finish', { summary });
         broadcast({ type: 'FINISH', summary, turns: engineState.turns });
       },
       onError: (err) => {
         engineState.liveStatus = `Error: ${err.message}`;
-        notifyToolbarBadge('error', { error: err.message });
+        notifyUser('error', { error: err.message });
         broadcast({ type: 'ERROR', error: err.message });
       },
       onAskUser: (question: string) => {
         engineState.pendingQuestion = question;
-        notifyToolbarBadge('ask_user', { question });
+        notifyUser('ask_user', { question });
         broadcast({ type: 'ASK_USER', question });
         return new Promise<string>((resolve) => {
           userPromptResolver = resolve;
@@ -464,7 +506,7 @@ function resumeHistoryTask(task: TaskRecord, settings: AllSettings) {
       },
       onBudgetLimitReached: (currentSpentUSD: number, currentCapUSD: number) => {
         engineState.pendingBudgetLimit = { currentSpentUSD, currentCapUSD };
-        notifyToolbarBadge('budget_limit');
+        notifyUser('budget_limit');
         broadcast({ type: 'BUDGET_LIMIT', currentSpentUSD, currentCapUSD });
         return new Promise<BudgetLimitDecision>((resolve) => {
           budgetLimitResolver = resolve;
@@ -542,6 +584,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     engineState.isRunning = false;
     engineState.isPaused = false;
     engineState.liveStatus = 'Task stopped by user.';
+    const lastIdx = engineState.turns.length - 1;
+    if (lastIdx >= 0 && engineState.turns[lastIdx].status === 'running') {
+      engineState.turns[lastIdx] = {
+        ...engineState.turns[lastIdx],
+        status: 'failed',
+        resultSummary: 'Task stopped by user.',
+      };
+    }
     clearToolbarBadge();
     broadcast({ type: 'STATUS_SYNC', state: engineState });
     sendResponse({ success: true });

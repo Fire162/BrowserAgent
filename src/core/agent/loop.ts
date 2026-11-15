@@ -4,12 +4,14 @@ import { AGENT_TOOLS } from './tools';
 import { SYSTEM_PROMPT } from './prompts';
 import { triggerNotification, notifyToolbarBadge } from '../utils/notifications';
 import { performTabNavigation, performTabScreenshot, detectHttpOrBrowserError, HttpOrBrowserError } from './tab-ops';
+import { loadSchedules, saveSchedule, deleteSchedule, ScheduleRecord } from '../storage/db';
 
 export interface TargetTabInfo {
   id: number;
   title: string;
   url: string;
   favIconUrl?: string;
+  windowId?: number;
 }
 
 export interface StepRecord {
@@ -440,6 +442,7 @@ Directive for Agent: Do not halt execution. If you need content from this site, 
         title: activeTab.title || 'Active Tab',
         url: activeTab.url || '',
         favIconUrl: activeTab.favIconUrl,
+        windowId: activeTab.windowId,
       };
     }
 
@@ -451,14 +454,37 @@ Directive for Agent: Do not halt execution. If you need content from this site, 
         title: tab.title || 'Tab #' + tab.id,
         url: tab.url || '',
         favIconUrl: tab.favIconUrl,
+        windowId: tab.windowId,
       };
       this.callbacks.onTargetTabChanged?.(this.targetTabInfo);
     } catch {
       return `Target tab #${this.targetTabId} was closed or not found.`;
     }
 
-    const tabId = this.targetTabId;
+    let tabId = this.targetTabId;
     await this.ensureContentScript(tabId);
+
+    // Track newly opened tabs (e.g. target="_blank" or window.open) so agent follows naturally
+    const onTabCreatedListener = (newTab: chrome.tabs.Tab) => {
+      if (newTab.id && newTab.openerTabId === this.targetTabId) {
+        this.targetTabId = newTab.id;
+        tabId = newTab.id;
+        this.targetTabInfo = {
+          id: newTab.id,
+          title: newTab.title || 'New Tab',
+          url: newTab.url || '',
+          favIconUrl: newTab.favIconUrl,
+          windowId: newTab.windowId,
+        };
+        this.callbacks.onTargetTabChanged?.(this.targetTabInfo);
+        this.callbacks.onLog?.(`Following newly opened tab #${newTab.id} ("${newTab.title || 'New Tab'}")`);
+        this.ensureContentScript(newTab.id).catch(() => {});
+      }
+    };
+
+    if (typeof chrome !== 'undefined' && chrome.tabs?.onCreated) {
+      chrome.tabs.onCreated.addListener(onTabCreatedListener);
+    }
 
     let maxBudgetUSD = this.settings.agent.maxBudgetUSD ?? 0.25;
     const showVisualLabels = this.settings.agent.showVisualLabels ?? true;
@@ -473,6 +499,7 @@ Directive for Agent: Do not halt execution. If you need content from this site, 
 
     try {
       while (true) {
+        tabId = this.targetTabId;
         if (this.aborted) {
           await this.clearBadges(tabId);
           return 'Execution stopped by user.';
@@ -870,6 +897,73 @@ What is your next action?`;
               name: 'navigate',
               resultStr,
             });
+          } else if (currentTool.name === 'schedule_task') {
+            const goal = currentTool.arguments.goal || '';
+            const delayInMinutes = Math.max(1, parseFloat(currentTool.arguments.delayInMinutes || '5'));
+            const periodInMinutes = currentTool.arguments.periodInMinutes
+              ? Math.max(1, parseFloat(currentTool.arguments.periodInMinutes))
+              : undefined;
+
+            const scheduleId = `schedule_${Date.now()}`;
+            const nextRunAt = Date.now() + delayInMinutes * 60 * 1000;
+
+            const scheduleRec: ScheduleRecord = {
+              id: scheduleId,
+              goal,
+              delayInMinutes,
+              periodInMinutes,
+              createdAt: Date.now(),
+              nextRunAt,
+              status: 'active',
+            };
+
+            await saveSchedule(scheduleRec);
+
+            if (typeof chrome !== 'undefined' && chrome.alarms) {
+              chrome.alarms.create(scheduleId, {
+                delayInMinutes,
+                periodInMinutes,
+              });
+            }
+
+            const recurMsg = periodInMinutes ? ` (repeating every ${periodInMinutes}m)` : ' (one-off)';
+            resultStr = `Successfully scheduled autonomous task "${goal}" to execute in ${delayInMinutes} minute(s)${recurMsg}. Schedule ID: ${scheduleId}. Trigger time: ${new Date(nextRunAt).toLocaleTimeString()}.`;
+            this.callbacks.onLog?.(`⏰ Scheduled task: "${goal.slice(0, 30)}..." in ${delayInMinutes}m`);
+
+            executedResults.push({
+              id: toolCallId,
+              name: 'schedule_task',
+              resultStr,
+            });
+          } else if (currentTool.name === 'list_schedules') {
+            const schedules = await loadSchedules();
+            const activeList = schedules.filter((s) => s.status === 'active');
+            if (activeList.length === 0) {
+              resultStr = 'No active scheduled tasks found.';
+            } else {
+              resultStr = `Active scheduled tasks (${activeList.length}):\n` + activeList.map((s, idx) => {
+                const nextStr = new Date(s.nextRunAt).toLocaleTimeString();
+                return `${idx + 1}. [${s.id}] "${s.goal}" - Next trigger at ${nextStr}${s.periodInMinutes ? ` (every ${s.periodInMinutes}m)` : ''}`;
+              }).join('\n');
+            }
+            executedResults.push({
+              id: toolCallId,
+              name: 'list_schedules',
+              resultStr,
+            });
+          } else if (currentTool.name === 'cancel_schedule') {
+            const sId = currentTool.arguments.scheduleId;
+            if (typeof chrome !== 'undefined' && chrome.alarms) {
+              chrome.alarms.clear(sId);
+            }
+            await deleteSchedule(sId);
+            resultStr = `Cancelled scheduled task with ID ${sId}.`;
+            this.callbacks.onLog?.(`Cancelled schedule ${sId}`);
+            executedResults.push({
+              id: toolCallId,
+              name: 'cancel_schedule',
+              resultStr,
+            });
           } else {
             if (currentTool.name === 'read_page_content') {
               this.callbacks.onLog?.('Reading page DOM text...');
@@ -945,6 +1039,10 @@ What is your next action?`;
       await this.clearBadges(tabId);
       this.callbacks.onError?.(err);
       throw err;
+    } finally {
+      if (typeof chrome !== 'undefined' && chrome.tabs?.onCreated) {
+        chrome.tabs.onCreated.removeListener(onTabCreatedListener);
+      }
     }
   }
 }

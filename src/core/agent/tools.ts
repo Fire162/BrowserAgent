@@ -206,4 +206,48 @@ export const AGENT_TOOLS: ToolDefinition[] = [
       required: ['summary'],
     },
   },
+  {
+    name: 'schedule_task',
+    description: 'Schedule a future or recurring autonomous browser task using chrome.alarms. The agent will automatically awaken and execute this goal at the scheduled time.',
+    parameters: {
+      type: 'object',
+      properties: {
+        goal: {
+          type: 'string',
+          description: 'The exact instruction/goal to execute when the schedule triggers.',
+        },
+        delayInMinutes: {
+          type: 'string',
+          description: 'Minutes from now to trigger the first execution (e.g. "5", "30", "60").',
+        },
+        periodInMinutes: {
+          type: 'string',
+          description: 'Optional recurring interval in minutes for recurring jobs (e.g. "60" for every hour).',
+        },
+      },
+      required: ['goal', 'delayInMinutes'],
+    },
+  },
+  {
+    name: 'list_schedules',
+    description: 'List all currently active scheduled autonomous tasks.',
+    parameters: {
+      type: 'object',
+      properties: {},
+    },
+  },
+  {
+    name: 'cancel_schedule',
+    description: 'Cancel an active scheduled task by its scheduleId.',
+    parameters: {
+      type: 'object',
+      properties: {
+        scheduleId: {
+          type: 'string',
+          description: 'The ID of the scheduled task to cancel (e.g. "schedule_1731671234").',
+        },
+      },
+      required: ['scheduleId'],
+    },
+  },
 ];
