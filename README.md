@@ -61,7 +61,7 @@
 2. Enable **Developer mode** (toggle in the top-right corner).
 3. Click **Load unpacked** and select:
    `/root/browseragent/dist`
-   *(Or extract `/root/browseragent/browseragent-v1.2.3.zip`)*
+   *(Or extract `/root/browseragent/browseragent-v1.3.0.zip`)*
 4. Click the **BrowserAgent** icon in your browser toolbar to open the Side Panel!
 5. In **Keys & Models**, select your company, paste your API key, choose between the **Frontier Model** and **Budget Model**, and run tasks directly.
 
