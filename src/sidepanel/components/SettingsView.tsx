@@ -1,8 +1,26 @@
 import React, { useState, useEffect } from 'react';
-import { Eye, EyeOff, Key, ExternalLink, RefreshCw, Cpu, Check, AlertCircle, Sparkles, Globe } from 'lucide-react';
-import { AllSettings, ProviderId, ModelOption } from '../../core/llm/types';
+import {
+  Eye,
+  EyeOff,
+  Key,
+  ExternalLink,
+  RefreshCw,
+  Cpu,
+  Check,
+  AlertCircle,
+  Sparkles,
+  Layers,
+  Plus,
+  Trash2,
+  Shuffle,
+  RotateCw,
+  ShieldAlert,
+  ClipboardList,
+} from 'lucide-react';
+import { AllSettings, ProviderId, ModelOption, KeyRotationStrategy } from '../../core/llm/types';
 import { PROVIDERS } from '../../core/llm/providers/registry';
 import { fetchLiveProviderModels } from '../../core/llm/models-fetcher';
+import { getProviderApiKeys, maskApiKey, normalizeApiKeys } from '../../core/llm/key-pool';
 
 interface SettingsViewProps {
   settings: AllSettings;
@@ -29,9 +47,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [fetchMessage, setFetchMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  // Key Pool local input state
+  const [newKeyInput, setNewKeyInput] = useState('');
+  const [isBulkEditing, setIsBulkEditing] = useState(false);
+  const [bulkInputText, setBulkInputText] = useState('');
+
   const activeProviderId = settings.activeProvider;
   const activeDef = PROVIDERS[activeProviderId];
   const activeConfig = settings.providers[activeProviderId];
+
+  const currentKeys = getProviderApiKeys(activeConfig);
+  const currentStrategy: KeyRotationStrategy = activeConfig.keyStrategy || 'use_until_error';
+
+  // Sync bulk text input when active provider or current keys change
+  useEffect(() => {
+    setBulkInputText(currentKeys.join('\n'));
+    setNewKeyInput('');
+    setIsBulkEditing(false);
+  }, [activeProviderId]);
 
   // Auto-fetch OpenRouter models live on load or provider switch
   useEffect(() => {
@@ -46,8 +79,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     }
   }, [activeProviderId]);
 
+  const triggerSaveIndicator = () => {
+    setSaveSuccess(true);
+    setTimeout(() => setSaveSuccess(false), 1500);
+  };
+
   const handleFetchLiveModels = async () => {
-    if (activeDef.requiresApiKey && activeProviderId !== 'openrouter' && !activeConfig.apiKey?.trim()) {
+    const keys = getProviderApiKeys(activeConfig);
+    if (activeDef.requiresApiKey && activeProviderId !== 'openrouter' && keys.length === 0) {
       setErrorMessage(`Please enter your ${activeDef.name} API key first.`);
       setTimeout(() => setErrorMessage(null), 3500);
       return;
@@ -58,9 +97,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setErrorMessage(null);
 
     try {
+      const primaryKey = keys[0] || activeConfig.apiKey;
       const models = await fetchLiveProviderModels(
         activeProviderId,
-        activeConfig.apiKey,
+        primaryKey,
         activeConfig.baseUrl
       );
 
@@ -80,8 +120,37 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     }
   };
 
-  const handleApiKeyChange = (val: string) => {
-    onUpdateProvider(activeProviderId, { apiKey: val.trim() });
+  const updateKeys = (newKeys: string[]) => {
+    const normalized = normalizeApiKeys(newKeys);
+    onUpdateProvider(activeProviderId, {
+      apiKeys: normalized,
+      apiKey: normalized[0] || '',
+    });
+    setBulkInputText(normalized.join('\n'));
+    triggerSaveIndicator();
+  };
+
+  const handleAddSingleKey = () => {
+    const trimmed = newKeyInput.trim();
+    if (!trimmed) return;
+    const added = normalizeApiKeys([...currentKeys, trimmed]);
+    updateKeys(added);
+    setNewKeyInput('');
+  };
+
+  const handleRemoveKey = (idx: number) => {
+    const updated = currentKeys.filter((_, i) => i !== idx);
+    updateKeys(updated);
+  };
+
+  const handleSaveBulkKeys = () => {
+    const parsed = normalizeApiKeys(bulkInputText);
+    updateKeys(parsed);
+    setIsBulkEditing(false);
+  };
+
+  const handleStrategyChange = (strat: KeyRotationStrategy) => {
+    onUpdateProvider(activeProviderId, { keyStrategy: strat });
     triggerSaveIndicator();
   };
 
@@ -98,11 +167,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const handleBaseUrlChange = (val: string) => {
     onUpdateProvider(activeProviderId, { baseUrl: val.trim() });
     triggerSaveIndicator();
-  };
-
-  const triggerSaveIndicator = () => {
-    setSaveSuccess(true);
-    setTimeout(() => setSaveSuccess(false), 1500);
   };
 
   const availableModels = liveModelsMap[activeProviderId] || activeDef.models;
@@ -133,7 +197,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           {onClearWarning && (
             <button
               onClick={onClearWarning}
-              className="text-amber-400 hover:text-white text-xs font-bold px-1"
+              className="text-amber-400 hover:text-white text-xs font-bold px-1 cursor-pointer"
             >
               ✕
             </button>
@@ -150,7 +214,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           {(Object.keys(PROVIDERS) as ProviderId[]).map((pid) => {
             const p = PROVIDERS[pid];
             const isSelected = activeProviderId === pid;
-            const hasKey = !p.requiresApiKey || Boolean(settings.providers[pid]?.apiKey);
+            const pKeys = getProviderApiKeys(settings.providers[pid]);
+            const hasKey = !p.requiresApiKey || pKeys.length > 0;
 
             return (
               <button
@@ -159,7 +224,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   onSetActiveProvider(pid);
                   setModelFilter('');
                 }}
-                className={`p-2.5 rounded-lg border text-left flex flex-col justify-between transition-all ${
+                className={`p-2.5 rounded-lg border text-left flex flex-col justify-between transition-all cursor-pointer ${
                   isSelected
                     ? 'border-sky-500 bg-sky-500/10 shadow-sm'
                     : 'border-slate-800 bg-slate-900/60 hover:border-slate-700 hover:bg-slate-900'
@@ -169,12 +234,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   <span className={`font-medium text-xs ${isSelected ? 'text-sky-300' : 'text-slate-200'}`}>
                     {p.name}
                   </span>
-                  <span
-                    className={`h-2 w-2 rounded-full ${
-                      hasKey ? 'bg-emerald-400' : 'bg-amber-400/80'
-                    }`}
-                    title={hasKey ? 'Configured' : 'Key required'}
-                  />
+                  <div className="flex items-center gap-1">
+                    {pKeys.length > 1 && (
+                      <span className="text-[9px] px-1 bg-sky-500/20 text-sky-300 rounded font-mono">
+                        {pKeys.length}x
+                      </span>
+                    )}
+                    <span
+                      className={`h-2 w-2 rounded-full ${
+                        hasKey ? 'bg-emerald-400' : 'bg-amber-400/80'
+                      }`}
+                      title={hasKey ? `${pKeys.length || 1} Key(s) Configured` : 'Key required'}
+                    />
+                  </div>
                 </div>
                 <span className="text-[10px] text-slate-400 line-clamp-1">{p.id}</span>
               </button>
@@ -210,35 +282,197 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           )}
         </div>
 
-        {/* API Key */}
+        {/* Multi API Key Pool System */}
         {activeDef.requiresApiKey && (
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium text-slate-300 flex items-center gap-1.5">
-              <Key className="h-3.5 w-3.5 text-slate-400" />
-              <span>API Key</span>
-            </label>
-            <div className="relative">
-              <input
-                type={showKey ? 'text' : 'password'}
-                value={activeConfig.apiKey || ''}
-                onChange={(e) => handleApiKeyChange(e.target.value)}
-                placeholder={`Paste your ${activeDef.name} API key...`}
-                className="w-full bg-slate-950 border border-slate-700/80 rounded-lg px-3 py-2 text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 pr-9"
-              />
-              <button
-                type="button"
-                onClick={() => setShowKey(!showKey)}
-                className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-200"
-              >
-                {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-              </button>
+          <div className="space-y-3 p-3 bg-slate-950/60 border border-slate-800 rounded-xl">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Layers className="h-4 w-4 text-sky-400" />
+                <span className="text-xs font-semibold text-slate-200">API Key Pool</span>
+                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-sky-500/15 border border-sky-500/30 text-sky-300">
+                  {currentKeys.length} {currentKeys.length === 1 ? 'key' : 'keys'}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsBulkEditing(!isBulkEditing)}
+                  className="text-[11px] text-sky-400 hover:text-sky-300 flex items-center gap-1 cursor-pointer font-medium"
+                >
+                  <ClipboardList className="h-3 w-3" />
+                  <span>{isBulkEditing ? 'Card View' : 'Bulk / Paste'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowKey(!showKey)}
+                  className="text-slate-400 hover:text-slate-200 cursor-pointer"
+                  title={showKey ? 'Hide keys' : 'Reveal keys'}
+                >
+                  {showKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                </button>
+              </div>
             </div>
-            {!activeConfig.apiKey && (
-              <p className="text-[11px] text-amber-400/90 flex items-center gap-1 mt-1">
-                <AlertCircle className="h-3 w-3" />
-                <span>An API key is required to run tasks with this provider.</span>
-              </p>
+
+            {/* Bulk Edit Textarea Mode */}
+            {isBulkEditing ? (
+              <div className="space-y-2">
+                <p className="text-[11px] text-slate-400">
+                  Paste multiple keys below (one per line or separated by commas):
+                </p>
+                <textarea
+                  value={bulkInputText}
+                  onChange={(e) => setBulkInputText(e.target.value)}
+                  placeholder="Paste keys here (one key per line)..."
+                  rows={4}
+                  className="w-full bg-slate-950 border border-slate-700/80 rounded-lg p-2.5 text-xs font-mono text-white placeholder-slate-600 focus:outline-none focus:border-sky-500 resize-y"
+                />
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBulkInputText(currentKeys.join('\n'));
+                      setIsBulkEditing(false);
+                    }}
+                    className="px-2.5 py-1 text-xs rounded bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveBulkKeys}
+                    className="px-3 py-1 text-xs rounded font-medium bg-sky-500 hover:bg-sky-400 text-slate-950 cursor-pointer"
+                  >
+                    Apply Keys ({normalizeApiKeys(bulkInputText).length})
+                  </button>
+                </div>
+              </div>
+            ) : (
+              /* Card / List View Mode */
+              <div className="space-y-2">
+                {/* Add Single Key Input */}
+                <div className="flex gap-1.5">
+                  <div className="relative flex-1">
+                    <input
+                      type={showKey ? 'text' : 'password'}
+                      value={newKeyInput}
+                      onChange={(e) => setNewKeyInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleAddSingleKey();
+                        }
+                      }}
+                      placeholder={`Add ${activeDef.name} API key to pool...`}
+                      className="w-full bg-slate-950 border border-slate-700/80 rounded-lg px-3 py-1.5 text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:border-sky-500"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleAddSingleKey}
+                    disabled={!newKeyInput.trim()}
+                    className="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-40 text-white rounded-lg text-xs font-medium flex items-center gap-1 transition-colors cursor-pointer shrink-0"
+                  >
+                    <Plus className="h-3 w-3" />
+                    <span>Add</span>
+                  </button>
+                </div>
+
+                {/* List of Configured Keys */}
+                {currentKeys.length === 0 ? (
+                  <div className="text-[11px] text-amber-400/90 flex items-center gap-1.5 py-1">
+                    <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                    <span>No API keys added yet. Add at least one key to use this provider.</span>
+                  </div>
+                ) : (
+                  <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                    {currentKeys.map((k, idx) => (
+                      <div
+                        key={idx}
+                        className="flex items-center justify-between p-2 rounded-lg bg-slate-900 border border-slate-800 text-xs font-mono text-slate-200"
+                      >
+                        <div className="flex items-center gap-2 min-w-0 pr-2">
+                          <span className="text-[10px] text-slate-500 font-bold shrink-0">
+                            #{idx + 1}
+                          </span>
+                          <span className="truncate">
+                            {showKey ? k : maskApiKey(k)}
+                          </span>
+                          {idx === 0 && (
+                            <span className="text-[9px] px-1 py-0.2 rounded bg-slate-800 text-slate-400 shrink-0">
+                              Primary
+                            </span>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveKey(idx)}
+                          className="text-slate-500 hover:text-rose-400 transition-colors p-1 cursor-pointer shrink-0"
+                          title="Remove key from pool"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
+
+            {/* Rotation Strategy Selector */}
+            <div className="pt-2 border-t border-slate-800/80 space-y-2">
+              <label className="text-[11px] font-semibold text-slate-300 block">
+                Rotation Strategy
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  {
+                    id: 'use_until_error' as KeyRotationStrategy,
+                    name: 'Use Until Error',
+                    desc: 'Uses active key until 429/error, then rotates',
+                    icon: ShieldAlert,
+                  },
+                  {
+                    id: 'round_robin' as KeyRotationStrategy,
+                    name: 'Round Robin',
+                    desc: 'Rotates sequentially (1 → 2 → 3) per request',
+                    icon: RotateCw,
+                  },
+                  {
+                    id: 'random' as KeyRotationStrategy,
+                    name: 'Random',
+                    desc: 'Picks a random key from the pool each turn',
+                    icon: Shuffle,
+                  },
+                ].map((strat) => {
+                  const Icon = strat.icon;
+                  const isSelected = currentStrategy === strat.id;
+
+                  return (
+                    <button
+                      key={strat.id}
+                      type="button"
+                      onClick={() => handleStrategyChange(strat.id)}
+                      className={`p-2 rounded-lg border text-left flex flex-col justify-between transition-all cursor-pointer ${
+                        isSelected
+                          ? 'border-sky-500 bg-sky-500/15 shadow-sm'
+                          : 'border-slate-800 bg-slate-900/40 hover:border-slate-700'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between w-full mb-1">
+                        <Icon className={`h-3.5 w-3.5 ${isSelected ? 'text-sky-400' : 'text-slate-400'}`} />
+                        {isSelected && <Check className="h-3 w-3 text-sky-400" />}
+                      </div>
+                      <div className={`text-xs font-semibold ${isSelected ? 'text-sky-300' : 'text-slate-300'}`}>
+                        {strat.name}
+                      </div>
+                      <div className="text-[10px] text-slate-400 leading-tight mt-0.5">
+                        {strat.desc}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         )}
 
@@ -270,7 +504,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               type="button"
               onClick={handleFetchLiveModels}
               disabled={fetchingModels}
-              className="text-xs text-sky-400 hover:text-sky-300 flex items-center gap-1 disabled:opacity-50 font-medium"
+              className="text-xs text-sky-400 hover:text-sky-300 flex items-center gap-1 disabled:opacity-50 font-medium cursor-pointer"
               title="Query the live provider endpoint for active serving models"
             >
               <RefreshCw className={`h-3 w-3 ${fetchingModels ? 'animate-spin' : ''}`} />
@@ -393,7 +627,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 key={b.val}
                 type="button"
                 onClick={() => onUpdateAgent({ maxBudgetUSD: b.val })}
-                className={`py-1 rounded border text-center font-mono transition-colors ${
+                className={`py-1 rounded border text-center font-mono transition-colors cursor-pointer ${
                   settings.agent.maxBudgetUSD === b.val
                     ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300 font-semibold'
                     : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:text-white'
@@ -450,7 +684,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           <button
             type="button"
             onClick={() => onUpdateAgent({ showVisualLabels: !settings.agent.showVisualLabels })}
-            className={`w-10 h-5 flex items-center rounded-full p-0.5 transition-colors ${
+            className={`w-10 h-5 flex items-center rounded-full p-0.5 transition-colors cursor-pointer ${
               settings.agent.showVisualLabels ? 'bg-sky-500' : 'bg-slate-800'
             }`}
           >

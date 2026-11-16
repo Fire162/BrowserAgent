@@ -249,3 +249,79 @@ export async function deleteSchedule(scheduleId: string): Promise<void> {
     chrome.storage.local.set({ [SCHEDULES_KEY]: updated }, () => resolve());
   });
 }
+
+const ACTIVE_SESSION_KEY = 'browseragent_active_session';
+
+export interface ActiveSessionRecord {
+  turns: any[];
+  messages?: any[];
+  steps?: any[];
+  targetTab?: any;
+  activeGoal?: string | null;
+  liveCostUSD?: number;
+  liveTokens?: number;
+  liveCachedTokens?: number;
+  savedAt: number;
+}
+
+export async function saveActiveSession(session: Omit<ActiveSessionRecord, 'savedAt'>): Promise<void> {
+  const record: ActiveSessionRecord = {
+    ...session,
+    savedAt: Date.now(),
+  };
+
+  if (!isExtensionEnv) {
+    try {
+      sessionStorage.setItem(ACTIVE_SESSION_KEY, JSON.stringify(record));
+    } catch {}
+    return;
+  }
+
+  const storageArea = (chrome.storage && (chrome.storage as any).session) ? (chrome.storage as any).session : chrome.storage.local;
+  return new Promise((resolve) => {
+    storageArea.set({ [ACTIVE_SESSION_KEY]: record }, () => resolve());
+  });
+}
+
+export async function loadActiveSession(): Promise<ActiveSessionRecord | null> {
+  if (!isExtensionEnv) {
+    try {
+      const raw = sessionStorage.getItem(ACTIVE_SESSION_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  const storageArea = (chrome.storage && (chrome.storage as any).session) ? (chrome.storage as any).session : chrome.storage.local;
+  return new Promise((resolve) => {
+    storageArea.get([ACTIVE_SESSION_KEY], (res: any) => {
+      if (res && res[ACTIVE_SESSION_KEY]) {
+        try {
+          const rec = typeof res[ACTIVE_SESSION_KEY] === 'string'
+            ? JSON.parse(res[ACTIVE_SESSION_KEY])
+            : res[ACTIVE_SESSION_KEY];
+          resolve(rec);
+        } catch {
+          resolve(null);
+        }
+      } else {
+        resolve(null);
+      }
+    });
+  });
+}
+
+export async function clearActiveSession(): Promise<void> {
+  if (!isExtensionEnv) {
+    try {
+      sessionStorage.removeItem(ACTIVE_SESSION_KEY);
+    } catch {}
+    return;
+  }
+
+  const storageArea = (chrome.storage && (chrome.storage as any).session) ? (chrome.storage as any).session : chrome.storage.local;
+  return new Promise((resolve) => {
+    storageArea.remove([ACTIVE_SESSION_KEY], () => resolve());
+  });
+}

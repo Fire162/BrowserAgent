@@ -7,6 +7,7 @@ import { useSettings } from './hooks/useSettings';
 import { StepRecord, TargetTabInfo, BudgetLimitDecision } from '../core/agent/loop';
 import { TaskRecord } from '../core/storage/db';
 import { PROVIDERS } from '../core/llm/providers/registry';
+import { getProviderApiKeys } from '../core/llm/key-pool';
 import { playNotificationChime } from '../core/utils/notifications';
 
 export interface ChatTurn {
@@ -301,7 +302,14 @@ export const App: React.FC = () => {
   const currentModel = activeConfig.customModelId || activeConfig.selectedModel || activeDef.defaultModel;
 
   const handleStartTask = async (goal: string) => {
-    if (activeDef.requiresApiKey && !activeConfig.apiKey?.trim()) {
+    // If an ongoing chat already exists with previous turns, resume seamlessly!
+    if (turns.length > 0) {
+      handleResumeTask(goal);
+      return;
+    }
+
+    const availableKeys = getProviderApiKeys(activeConfig);
+    if (activeDef.requiresApiKey && availableKeys.length === 0) {
       setKeyWarning(`API Key required for ${activeDef.name}. Please enter your key below to get started.`);
       setCurrentTab('settings');
       return;
@@ -371,9 +379,11 @@ export const App: React.FC = () => {
       status: 'running',
     };
 
+    const nextTurns = [...turns, followUpTurn];
     setIsRunning(true);
     setIsPaused(false);
-    setTurns((prev) => [...prev, followUpTurn]);
+    setTurns(nextTurns);
+    setHasActiveSession(true);
     setLiveStatus('Continuing task on assigned tab with follow-up...');
 
     chrome.runtime.sendMessage({
@@ -381,6 +391,9 @@ export const App: React.FC = () => {
       params: {
         followUpText,
         settings,
+        turns: nextTurns,
+        messages: cachedMessagesRef.current,
+        targetTabId: targetTab?.id,
       },
     });
   };
@@ -485,7 +498,7 @@ export const App: React.FC = () => {
             liveStatus={liveStatus}
             activeProvider={activeDef.name}
             activeModel={currentModel}
-            hasApiKey={Boolean(activeConfig.apiKey?.trim()) || !activeDef.requiresApiKey}
+            hasApiKey={getProviderApiKeys(activeConfig).length > 0 || !activeDef.requiresApiKey}
             onSelectTab={setCurrentTab}
             onUseFreeModels={handleUseFreeModels}
             pendingQuestion={pendingQuestion}

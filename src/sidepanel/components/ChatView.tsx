@@ -154,7 +154,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
       return;
     }
 
-    if (hasActiveSession) {
+    if (hasActiveSession || turns.length > 0) {
       // Continue in the SAME chat! Keeps all previous turns & context intact!
       onResumeTask(trimmed);
       setInputText('');
@@ -432,7 +432,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
             </div>
           )}
 
-          {hasActiveSession && onNewChat && (
+          {(hasActiveSession || turns.length > 0) && onNewChat && (
             <button
               type="button"
               onClick={onNewChat}
@@ -897,7 +897,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
                   ? "Steer agent mid-flight (Enter to send, Esc to Stop)..."
                   : isPaused
                   ? "Task paused. Enter follow-up instruction (Enter to send)..."
-                  : hasActiveSession
+                  : hasActiveSession || turns.length > 0
                   ? "Ask follow-up in this chat (Enter to send, Shift+Enter for newline)..."
                   : "Give a task on assigned tab (Enter to send, Shift+Enter for newline)..."
               }
@@ -968,7 +968,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
                     ? 'bg-sky-600 hover:bg-sky-500 disabled:opacity-40 text-white'
                     : isPaused
                     ? 'bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white'
-                    : hasActiveSession
+                    : hasActiveSession || turns.length > 0
                     ? 'bg-sky-500 hover:bg-sky-400 disabled:opacity-40 text-black shadow-sky-500/20'
                     : 'bg-sky-500 hover:bg-sky-400 disabled:opacity-40 text-black shadow-sky-500/20'
                 }`}
@@ -983,7 +983,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
                     <Play className="h-3 w-3" />
                     <span>Resume with Note</span>
                   </>
-                ) : hasActiveSession ? (
+                ) : hasActiveSession || turns.length > 0 ? (
                   <>
                     <Send className="h-3 w-3" />
                     <span>Send Follow-up</span>

@@ -29,8 +29,12 @@ export interface ProviderDefinition {
   apiKeyHelpUrl: string;
 }
 
+export type KeyRotationStrategy = 'random' | 'round_robin' | 'use_until_error';
+
 export interface ProviderSettings {
   apiKey: string;
+  apiKeys?: string[];
+  keyStrategy?: KeyRotationStrategy;
   baseUrl?: string;
   selectedModel: string;
   customModelId?: string;

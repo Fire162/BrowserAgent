@@ -4,6 +4,7 @@ import { callOpenRouter } from './providers/openrouter';
 import { callGemini } from './providers/gemini';
 import { callAnthropic } from './providers/anthropic';
 import { callOpenAICompatible } from './providers/openai-compatible';
+import { getProviderApiKeys, executeWithKeyPool } from './key-pool';
 
 export async function executeLLMCall(
   settings: AllSettings,
@@ -21,10 +22,15 @@ export async function executeLLMCall(
   }
 
   const model = providerConfig.customModelId?.trim() || providerConfig.selectedModel || providerDef.defaultModel;
-  const apiKey = providerConfig.apiKey?.trim();
+  const keys = getProviderApiKeys(providerConfig);
+  const strategy = providerConfig.keyStrategy || 'use_until_error';
   const temperature = settings.agent.temperature ?? 0.2;
 
-  const dispatch = async (currentMessages: ChatMessage[]): Promise<LLMCompletionResponse> => {
+  if (providerDef.requiresApiKey && keys.length === 0) {
+    throw new Error(`API key required for ${providerDef.name}. Please enter your key in Settings to proceed.`);
+  }
+
+  const dispatchWithKey = async (apiKey: string, currentMessages: ChatMessage[]): Promise<LLMCompletionResponse> => {
     switch (providerId) {
       case 'openrouter':
         return callOpenRouter(apiKey, model, currentMessages, tools, temperature, onStatusNotice, signal);
@@ -129,6 +135,16 @@ export async function executeLLMCall(
       default:
         throw new Error(`Unsupported provider: ${providerId}`);
     }
+  };
+
+  const dispatch = (currentMessages: ChatMessage[]) => {
+    return executeWithKeyPool(
+      providerId,
+      keys,
+      strategy,
+      (key) => dispatchWithKey(key, currentMessages),
+      onStatusNotice
+    );
   };
 
   try {

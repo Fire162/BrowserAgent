@@ -5,7 +5,16 @@
 
 import { AgentExecution, StepRecord, TargetTabInfo, BudgetLimitDecision } from '../core/agent/loop';
 import { performTabNavigation, performTabScreenshot } from '../core/agent/tab-ops';
-import { saveTask, TaskRecord, loadSchedules, saveSchedule, loadSettings } from '../core/storage/db';
+import {
+  saveTask,
+  TaskRecord,
+  loadSchedules,
+  saveSchedule,
+  loadSettings,
+  saveActiveSession,
+  loadActiveSession,
+  clearActiveSession,
+} from '../core/storage/db';
 import { PROVIDERS } from '../core/llm/providers/registry';
 import { notifyToolbarBadge, clearToolbarBadge, setToolbarBadgeRunning } from '../core/utils/badge';
 import { AllSettings, ChatMessage } from '../core/llm/types';
@@ -60,6 +69,24 @@ let engineState: EngineState = {
 let activeExecution: AgentExecution | null = null;
 let userPromptResolver: ((answer: string) => void) | null = null;
 let budgetLimitResolver: ((decision: BudgetLimitDecision) => void) | null = null;
+let cachedSessionMessages: ChatMessage[] = [];
+
+// Hydrate ongoing chat session from storage on service worker boot
+loadActiveSession().then((session) => {
+  if (session && session.turns && session.turns.length > 0) {
+    engineState = {
+      ...engineState,
+      turns: session.turns,
+      hasActiveSession: true,
+      targetTab: session.targetTab || engineState.targetTab,
+      activeGoal: session.activeGoal || engineState.activeGoal,
+      liveCostUSD: session.liveCostUSD || 0,
+      liveTokens: session.liveTokens || 0,
+      liveCachedTokens: session.liveCachedTokens || 0,
+    };
+    if (session.messages) cachedSessionMessages = session.messages;
+  }
+}).catch(() => {});
 
 // Enable automatic side panel opening on extension icon click
 chrome.runtime.onInstalled.addListener(() => {
@@ -172,6 +199,106 @@ function finalizeSteps() {
   }));
 }
 
+function createAgentCallbacks() {
+  return {
+    onStepStart: (num: number) => {
+      engineState.currentStep = num;
+      broadcast({ type: 'STEP_START', stepNumber: num });
+    },
+    onStepComplete: (step: StepRecord) => {
+      if (engineState.turns.length > 0) {
+        const lastIdx = engineState.turns.length - 1;
+        const currentTurn = engineState.turns[lastIdx];
+        const existingStepIdx = currentTurn.steps.findIndex((s) => s.stepNumber === step.stepNumber);
+        let updatedSteps: StepRecord[];
+        if (existingStepIdx >= 0) {
+          updatedSteps = [...currentTurn.steps];
+          updatedSteps[existingStepIdx] = { ...step };
+        } else {
+          updatedSteps = [...currentTurn.steps, step];
+        }
+        engineState.turns[lastIdx] = { ...currentTurn, steps: updatedSteps };
+        broadcast({ type: 'STEP_COMPLETE', step, turns: engineState.turns });
+
+        if (activeExecution) {
+          cachedSessionMessages = activeExecution.getMessages();
+        }
+        saveActiveSession({
+          turns: engineState.turns,
+          messages: cachedSessionMessages,
+          targetTab: engineState.targetTab,
+          activeGoal: engineState.activeGoal,
+          liveCostUSD: engineState.liveCostUSD,
+          liveTokens: engineState.liveTokens,
+          liveCachedTokens: engineState.liveCachedTokens,
+        }).catch(() => {});
+      }
+    },
+    onCostUpdate: (cost: number, tokens: number, cached?: number) => {
+      engineState.liveCostUSD = cost;
+      engineState.liveTokens = tokens;
+      if (cached !== undefined) engineState.liveCachedTokens = cached;
+      broadcast({ type: 'COST_UPDATE', cost, tokens, cached });
+    },
+    onLog: (msg: string) => {
+      engineState.liveStatus = msg;
+      broadcast({ type: 'LOG', message: msg });
+    },
+    onFinish: (summary: string) => {
+      if (engineState.turns.length > 0) {
+        const lastIdx = engineState.turns.length - 1;
+        engineState.turns[lastIdx] = {
+          ...engineState.turns[lastIdx],
+          resultSummary: summary,
+          status: 'completed',
+        };
+      }
+      engineState.liveStatus = 'Task completed.';
+      notifyUser('finish', { summary });
+      broadcast({ type: 'FINISH', summary, turns: engineState.turns });
+
+      if (activeExecution) {
+        cachedSessionMessages = activeExecution.getMessages();
+      }
+      saveActiveSession({
+        turns: engineState.turns,
+        messages: cachedSessionMessages,
+        targetTab: engineState.targetTab,
+        activeGoal: engineState.activeGoal,
+        liveCostUSD: engineState.liveCostUSD,
+        liveTokens: engineState.liveTokens,
+        liveCachedTokens: engineState.liveCachedTokens,
+      }).catch(() => {});
+    },
+    onError: (err: any) => {
+      engineState.liveStatus = `Error: ${err.message}`;
+      notifyUser('error', { error: err.message });
+      broadcast({ type: 'ERROR', error: err.message });
+    },
+    onAskUser: (question: string) => {
+      engineState.pendingQuestion = question;
+      notifyUser('ask_user', { question });
+      broadcast({ type: 'ASK_USER', question });
+      return new Promise<string>((resolve) => {
+        userPromptResolver = resolve;
+      });
+    },
+    onBudgetLimitReached: (currentSpentUSD: number, currentCapUSD: number) => {
+      engineState.pendingBudgetLimit = { currentSpentUSD, currentCapUSD };
+      notifyUser('budget_limit');
+      broadcast({ type: 'BUDGET_LIMIT', currentSpentUSD, currentCapUSD });
+      return new Promise<BudgetLimitDecision>((resolve) => {
+        budgetLimitResolver = resolve;
+      });
+    },
+    onTargetTabChanged: (info: TargetTabInfo) => {
+      engineState.targetTab = info;
+      broadcast({ type: 'TARGET_TAB_CHANGED', info });
+    },
+    onGetSessionTurns: () => engineState.turns,
+  };
+}
+
 export interface ScheduledRunContext {
   continueSession?: boolean;
   url?: string;
@@ -186,7 +313,9 @@ async function runAgent(
   settings: AllSettings,
   targetTabId?: number,
   followUpText?: string,
-  scheduledContext?: ScheduledRunContext
+  scheduledContext?: ScheduledRunContext,
+  clientTurns?: ChatTurn[],
+  clientMessages?: ChatMessage[]
 ) {
   const activeDef = PROVIDERS[settings.activeProvider];
   const activeConfig = settings.providers[settings.activeProvider];
@@ -199,7 +328,7 @@ async function runAgent(
       : engineState.turns;
     const previousMessages = (scheduledContext.sessionMessages && scheduledContext.sessionMessages.length > 0)
       ? scheduledContext.sessionMessages
-      : (activeExecution ? activeExecution.getMessages() : []);
+      : (activeExecution ? activeExecution.getMessages() : cachedSessionMessages);
     const previousSteps = previousTurns.flatMap((t) => t.steps || []);
 
     const contextParts: string[] = [];
@@ -242,77 +371,7 @@ async function runAgent(
     const execution = new AgentExecution(
       settings,
       goal,
-      {
-        onStepStart: (num) => {
-          engineState.currentStep = num;
-          broadcast({ type: 'STEP_START', stepNumber: num });
-        },
-        onStepComplete: (step) => {
-          if (engineState.turns.length > 0) {
-            const lastIdx = engineState.turns.length - 1;
-            const currentTurn = engineState.turns[lastIdx];
-            const existingStepIdx = currentTurn.steps.findIndex((s) => s.stepNumber === step.stepNumber);
-            let updatedSteps: StepRecord[];
-            if (existingStepIdx >= 0) {
-              updatedSteps = [...currentTurn.steps];
-              updatedSteps[existingStepIdx] = { ...step };
-            } else {
-              updatedSteps = [...currentTurn.steps, step];
-            }
-            engineState.turns[lastIdx] = { ...currentTurn, steps: updatedSteps };
-            broadcast({ type: 'STEP_COMPLETE', step, turns: engineState.turns });
-          }
-        },
-        onCostUpdate: (cost, tokens, cached) => {
-          engineState.liveCostUSD = cost;
-          engineState.liveTokens = tokens;
-          if (cached !== undefined) engineState.liveCachedTokens = cached;
-          broadcast({ type: 'COST_UPDATE', cost, tokens, cached });
-        },
-        onLog: (msg) => {
-          engineState.liveStatus = msg;
-          broadcast({ type: 'LOG', message: msg });
-        },
-        onFinish: (summary) => {
-          if (engineState.turns.length > 0) {
-            const lastIdx = engineState.turns.length - 1;
-            engineState.turns[lastIdx] = {
-              ...engineState.turns[lastIdx],
-              resultSummary: summary,
-              status: 'completed',
-            };
-          }
-          engineState.liveStatus = 'Scheduled task completed.';
-          notifyUser('finish', { summary });
-          broadcast({ type: 'FINISH', summary, turns: engineState.turns });
-        },
-        onError: (err) => {
-          engineState.liveStatus = `Error: ${err.message}`;
-          notifyUser('error', { error: err.message });
-          broadcast({ type: 'ERROR', error: err.message });
-        },
-        onAskUser: (question: string) => {
-          engineState.pendingQuestion = question;
-          notifyUser('ask_user', { question });
-          broadcast({ type: 'ASK_USER', question });
-          return new Promise<string>((resolve) => {
-            userPromptResolver = resolve;
-          });
-        },
-        onBudgetLimitReached: (currentSpentUSD: number, currentCapUSD: number) => {
-          engineState.pendingBudgetLimit = { currentSpentUSD, currentCapUSD };
-          notifyUser('budget_limit');
-          broadcast({ type: 'BUDGET_LIMIT', currentSpentUSD, currentCapUSD });
-          return new Promise<BudgetLimitDecision>((resolve) => {
-            budgetLimitResolver = resolve;
-          });
-        },
-        onTargetTabChanged: (info) => {
-          engineState.targetTab = info;
-          broadcast({ type: 'TARGET_TAB_CHANGED', info });
-        },
-        onGetSessionTurns: () => engineState.turns,
-      },
+      createAgentCallbacks(),
       previousMessages.length > 0 ? previousMessages : undefined,
       previousSteps.length > 0 ? previousSteps : undefined,
       targetTabId
@@ -335,6 +394,17 @@ async function runAgent(
           status: isPaused ? 'paused' : 'completed',
         };
       }
+
+      cachedSessionMessages = execution.getMessages();
+      saveActiveSession({
+        turns: engineState.turns,
+        messages: cachedSessionMessages,
+        targetTab: engineState.targetTab,
+        activeGoal: goal,
+        liveCostUSD: engineState.liveCostUSD,
+        liveTokens: engineState.liveTokens,
+        liveCachedTokens: engineState.liveCachedTokens,
+      }).catch(() => {});
 
       if (!isPaused) {
         await saveTask({
@@ -374,8 +444,24 @@ async function runAgent(
     return;
   }
 
-  // Handle follow-up resume
-  if (followUpText && activeExecution) {
+  // Handle follow-up resume in ongoing chat session
+  if (followUpText) {
+    if (!activeExecution) {
+      const prevTurns = (clientTurns && clientTurns.length > 0) ? clientTurns : engineState.turns;
+      const prevSteps = prevTurns.flatMap((t: ChatTurn) => t.steps || []);
+      const prevMessages = (clientMessages && clientMessages.length > 0) ? clientMessages : cachedSessionMessages;
+      const targetId = targetTabId || engineState.targetTab?.id;
+
+      activeExecution = new AgentExecution(
+        settings,
+        engineState.activeGoal || followUpText,
+        createAgentCallbacks(),
+        prevMessages.length > 0 ? prevMessages : undefined,
+        prevSteps.length > 0 ? prevSteps : undefined,
+        targetId
+      );
+    }
+
     const followUpTurn: ChatTurn = {
       id: `turn_${Date.now()}`,
       userPrompt: followUpText,
@@ -385,9 +471,12 @@ async function runAgent(
       status: 'running',
     };
 
-    engineState.turns = [...engineState.turns, followUpTurn];
+    const baseTurns = (clientTurns && clientTurns.length > 0) ? clientTurns : engineState.turns;
+    const alreadyHasTurn = baseTurns.some((t) => t.userPrompt === followUpText && t.status === 'running');
+    engineState.turns = alreadyHasTurn ? baseTurns : [...baseTurns, followUpTurn];
     engineState.isRunning = true;
     engineState.isPaused = false;
+    engineState.hasActiveSession = true;
     engineState.liveStatus = 'Continuing task on assigned tab with follow-up...';
     broadcast({ type: 'STATUS_SYNC', state: engineState });
     startKeepAlive();
@@ -409,10 +498,21 @@ async function runAgent(
         };
       }
 
+      cachedSessionMessages = activeExecution.getMessages();
+      saveActiveSession({
+        turns: engineState.turns,
+        messages: cachedSessionMessages,
+        targetTab: engineState.targetTab,
+        activeGoal: engineState.activeGoal || followUpText,
+        liveCostUSD: engineState.liveCostUSD,
+        liveTokens: engineState.liveTokens,
+        liveCachedTokens: engineState.liveCachedTokens,
+      }).catch(() => {});
+
       if (!isPaused) {
         await saveTask({
           id: `task_${Date.now()}`,
-          goal: followUpText,
+          goal: engineState.activeGoal || followUpText,
           provider: activeDef?.name || settings.activeProvider,
           model: currentModel,
           status: 'completed',
@@ -420,11 +520,11 @@ async function runAgent(
           resultSummary: summary,
           steps: activeExecution.getSteps(),
           messages: activeExecution.getMessages(),
+          turns: engineState.turns,
           createdAt: Date.now(),
           completedAt: Date.now(),
         });
 
-        // Trigger finish notification via toolbar badge
         notifyToolbarBadge('finish', { summary });
       }
     } catch (err: any) {
@@ -481,77 +581,7 @@ async function runAgent(
   const execution = new AgentExecution(
     settings,
     goal,
-    {
-      onStepStart: (num) => {
-        engineState.currentStep = num;
-        broadcast({ type: 'STEP_START', stepNumber: num });
-      },
-      onStepComplete: (step) => {
-        if (engineState.turns.length > 0) {
-          const lastIdx = engineState.turns.length - 1;
-          const currentTurn = engineState.turns[lastIdx];
-          const existingStepIdx = currentTurn.steps.findIndex((s) => s.stepNumber === step.stepNumber);
-          let updatedSteps: StepRecord[];
-          if (existingStepIdx >= 0) {
-            updatedSteps = [...currentTurn.steps];
-            updatedSteps[existingStepIdx] = { ...step };
-          } else {
-            updatedSteps = [...currentTurn.steps, step];
-          }
-          engineState.turns[lastIdx] = { ...currentTurn, steps: updatedSteps };
-          broadcast({ type: 'STEP_COMPLETE', step, turns: engineState.turns });
-        }
-      },
-      onCostUpdate: (cost, tokens, cached) => {
-        engineState.liveCostUSD = cost;
-        engineState.liveTokens = tokens;
-        if (cached !== undefined) engineState.liveCachedTokens = cached;
-        broadcast({ type: 'COST_UPDATE', cost, tokens, cached });
-      },
-      onLog: (msg) => {
-        engineState.liveStatus = msg;
-        broadcast({ type: 'LOG', message: msg });
-      },
-      onFinish: (summary) => {
-        if (engineState.turns.length > 0) {
-          const lastIdx = engineState.turns.length - 1;
-          engineState.turns[lastIdx] = {
-            ...engineState.turns[lastIdx],
-            resultSummary: summary,
-            status: 'completed',
-          };
-        }
-        engineState.liveStatus = 'Task completed.';
-        notifyUser('finish', { summary });
-        broadcast({ type: 'FINISH', summary, turns: engineState.turns });
-      },
-      onError: (err) => {
-        engineState.liveStatus = `Error: ${err.message}`;
-        notifyUser('error', { error: err.message });
-        broadcast({ type: 'ERROR', error: err.message });
-      },
-      onAskUser: (question: string) => {
-        engineState.pendingQuestion = question;
-        notifyUser('ask_user', { question });
-        broadcast({ type: 'ASK_USER', question });
-        return new Promise<string>((resolve) => {
-          userPromptResolver = resolve;
-        });
-      },
-      onBudgetLimitReached: (currentSpentUSD: number, currentCapUSD: number) => {
-        engineState.pendingBudgetLimit = { currentSpentUSD, currentCapUSD };
-        notifyUser('budget_limit');
-        broadcast({ type: 'BUDGET_LIMIT', currentSpentUSD, currentCapUSD });
-        return new Promise<BudgetLimitDecision>((resolve) => {
-          budgetLimitResolver = resolve;
-        });
-      },
-      onTargetTabChanged: (info) => {
-        engineState.targetTab = info;
-        broadcast({ type: 'TARGET_TAB_CHANGED', info });
-      },
-      onGetSessionTurns: () => engineState.turns,
-    },
+    createAgentCallbacks(),
     undefined,
     undefined,
     targetTabId
@@ -575,6 +605,17 @@ async function runAgent(
       };
     }
 
+    cachedSessionMessages = execution.getMessages();
+    saveActiveSession({
+      turns: engineState.turns,
+      messages: cachedSessionMessages,
+      targetTab: engineState.targetTab,
+      activeGoal: goal,
+      liveCostUSD: engineState.liveCostUSD,
+      liveTokens: engineState.liveTokens,
+      liveCachedTokens: engineState.liveCachedTokens,
+    }).catch(() => {});
+
     if (!isPaused) {
       await saveTask({
         id: `task_${Date.now()}`,
@@ -586,6 +627,7 @@ async function runAgent(
         resultSummary: summary,
         steps: execution.getSteps(),
         messages: execution.getMessages(),
+        turns: engineState.turns,
         createdAt: startTime,
         completedAt: Date.now(),
       });
@@ -614,6 +656,7 @@ async function runAgent(
       resultSummary: err.message,
       steps: execution.getSteps(),
       messages: execution.getMessages(),
+      turns: engineState.turns,
       createdAt: startTime,
       completedAt: Date.now(),
     });
@@ -652,84 +695,26 @@ function resumeHistoryTask(task: TaskRecord, settings: AllSettings) {
     hasActiveSession: true,
   };
 
+  cachedSessionMessages = task.messages || [];
+
   activeExecution = new AgentExecution(
     settings,
     task.goal,
-    {
-      onStepStart: (num) => {
-        engineState.currentStep = num;
-        broadcast({ type: 'STEP_START', stepNumber: num });
-      },
-      onStepComplete: (step) => {
-        if (engineState.turns.length > 0) {
-          const lastIdx = engineState.turns.length - 1;
-          const currentTurn = engineState.turns[lastIdx];
-          const existingStepIdx = currentTurn.steps.findIndex((s) => s.stepNumber === step.stepNumber);
-          let updatedSteps: StepRecord[];
-          if (existingStepIdx >= 0) {
-            updatedSteps = [...currentTurn.steps];
-            updatedSteps[existingStepIdx] = { ...step };
-          } else {
-            updatedSteps = [...currentTurn.steps, step];
-          }
-          engineState.turns[lastIdx] = { ...currentTurn, steps: updatedSteps };
-          broadcast({ type: 'STEP_COMPLETE', step, turns: engineState.turns });
-        }
-      },
-      onCostUpdate: (cost, tokens, cached) => {
-        engineState.liveCostUSD = cost;
-        engineState.liveTokens = tokens;
-        if (cached !== undefined) engineState.liveCachedTokens = cached;
-        broadcast({ type: 'COST_UPDATE', cost, tokens, cached });
-      },
-      onLog: (msg) => {
-        engineState.liveStatus = msg;
-        broadcast({ type: 'LOG', message: msg });
-      },
-      onFinish: (summary) => {
-        if (engineState.turns.length > 0) {
-          const lastIdx = engineState.turns.length - 1;
-          engineState.turns[lastIdx] = {
-            ...engineState.turns[lastIdx],
-            resultSummary: summary,
-            status: 'completed',
-          };
-        }
-        engineState.liveStatus = 'Task completed.';
-        notifyUser('finish', { summary });
-        broadcast({ type: 'FINISH', summary, turns: engineState.turns });
-      },
-      onError: (err) => {
-        engineState.liveStatus = `Error: ${err.message}`;
-        notifyUser('error', { error: err.message });
-        broadcast({ type: 'ERROR', error: err.message });
-      },
-      onAskUser: (question: string) => {
-        engineState.pendingQuestion = question;
-        notifyUser('ask_user', { question });
-        broadcast({ type: 'ASK_USER', question });
-        return new Promise<string>((resolve) => {
-          userPromptResolver = resolve;
-        });
-      },
-      onBudgetLimitReached: (currentSpentUSD: number, currentCapUSD: number) => {
-        engineState.pendingBudgetLimit = { currentSpentUSD, currentCapUSD };
-        notifyUser('budget_limit');
-        broadcast({ type: 'BUDGET_LIMIT', currentSpentUSD, currentCapUSD });
-        return new Promise<BudgetLimitDecision>((resolve) => {
-          budgetLimitResolver = resolve;
-        });
-      },
-      onTargetTabChanged: (info) => {
-        engineState.targetTab = info;
-        broadcast({ type: 'TARGET_TAB_CHANGED', info });
-      },
-      onGetSessionTurns: () => engineState.turns,
-    },
+    createAgentCallbacks(),
     task.messages,
     task.steps,
     engineState.targetTab?.id
   );
+
+  saveActiveSession({
+    turns: loadedTurns,
+    messages: cachedSessionMessages,
+    targetTab: engineState.targetTab,
+    activeGoal: task.goal,
+    liveCostUSD: engineState.liveCostUSD,
+    liveTokens: engineState.liveTokens,
+    liveCachedTokens: engineState.liveCachedTokens,
+  }).catch(() => {});
 
   broadcast({ type: 'STATUS_SYNC', state: engineState });
 }
@@ -740,11 +725,35 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
   // 1. Get complete background engine state
   if (action === 'get_engine_state') {
-    sendResponse({
-      success: true,
-      state: engineState,
-      hasActiveSession: !!activeExecution || engineState.hasActiveSession,
-    });
+    const respond = () => {
+      sendResponse({
+        success: true,
+        state: engineState,
+        hasActiveSession: !!activeExecution || engineState.hasActiveSession || (engineState.turns && engineState.turns.length > 0),
+      });
+    };
+
+    if (engineState.turns.length === 0) {
+      loadActiveSession().then((session) => {
+        if (session && session.turns && session.turns.length > 0) {
+          engineState = {
+            ...engineState,
+            turns: session.turns,
+            hasActiveSession: true,
+            targetTab: session.targetTab || engineState.targetTab,
+            activeGoal: session.activeGoal || engineState.activeGoal,
+            liveCostUSD: session.liveCostUSD || 0,
+            liveTokens: session.liveTokens || 0,
+            liveCachedTokens: session.liveCachedTokens || 0,
+          };
+          if (session.messages) cachedSessionMessages = session.messages;
+        }
+        respond();
+      }).catch(() => respond());
+      return true;
+    }
+
+    respond();
     return true;
   }
 
@@ -765,8 +774,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
   // 4. Resume task with follow-up
   if (action === 'resume_task') {
-    const { followUpText, settings } = params || {};
-    runAgent('', settings, undefined, followUpText);
+    const { followUpText, settings, turns: clientTurns, messages: clientMessages, targetTabId } = params || {};
+    runAgent('', settings, targetTabId, followUpText, undefined, clientTurns, clientMessages);
     sendResponse({ success: true });
     return true;
   }
@@ -870,6 +879,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       budgetLimitResolver = null;
     }
     userPromptResolver = null;
+    cachedSessionMessages = [];
+    clearActiveSession().catch(() => {});
     clearToolbarBadge();
     engineState = {
       isRunning: false,
@@ -904,7 +915,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (action === 'get_full_messages') {
     sendResponse({
       success: true,
-      messages: activeExecution?.getMessages() || [],
+      messages: activeExecution?.getMessages() || cachedSessionMessages,
     });
     return true;
   }

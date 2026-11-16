@@ -426,6 +426,7 @@ Directive for Agent: Do not halt execution. If you need content from this site, 
   public async run(followUpInstruction?: string): Promise<string> {
     this.aborted = false;
     this.paused = false;
+    this.completed = false;
     this.abortController = new AbortController();
 
     if (followUpInstruction) {
