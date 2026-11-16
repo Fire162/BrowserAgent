@@ -246,28 +246,75 @@ function createMarkedParser(): Marked {
 
 const parserInstance = createMarkedParser();
 
+let cachedPurifier: any = null;
+
+function getPurifier(): any {
+  if (cachedPurifier && typeof cachedPurifier.sanitize === 'function') {
+    return cachedPurifier;
+  }
+  try {
+    if (typeof (DOMPurify as any)?.sanitize === 'function') {
+      cachedPurifier = DOMPurify;
+      return cachedPurifier;
+    }
+    if (typeof DOMPurify === 'function') {
+      const targetWindow = typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? (globalThis as any).window : null);
+      if (targetWindow) {
+        const inst = (DOMPurify as any)(targetWindow);
+        if (inst && typeof inst.sanitize === 'function') {
+          cachedPurifier = inst;
+          return cachedPurifier;
+        }
+      }
+    }
+  } catch {
+    // Fall back to regex sanitizer
+  }
+  return null;
+}
+
+function fallbackSanitize(html: string): string {
+  return html
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+    .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, '')
+    .replace(/<object\b[^<]*(?:(?!<\/object>)<[^<]*)*<\/object>/gi, '')
+    .replace(/<embed\b[^<]*(?:(?!<\/embed>)<[^<]*)*<\/embed>/gi, '')
+    .replace(/\s+on\w+\s*=\s*(['"]).*?\1/gi, '')
+    .replace(/\s+on\w+\s*=\s*[^>\s]+/gi, '')
+    .replace(/href\s*=\s*(['"])javascript:[^'"]*\1/gi, 'href="#"');
+}
+
 /**
  * Strict HTML sanitization using DOMPurify with support for MathML, SVG, tables, task lists, and details/summary.
  */
 export function sanitizeMarkdownHtml(dirtyHtml: string): string {
-  return DOMPurify.sanitize(dirtyHtml, {
-    USE_PROFILES: { html: true, svg: true, mathMl: true },
-    ADD_TAGS: [
-      'details', 'summary', 'input', 'sup', 'sub', 'u', 'ins', 'del', 'mark', 'kbd',
-      'svg', 'g', 'path', 'circle', 'line', 'polygon', 'text', 'rect',
-      'math', 'mrow', 'mi', 'mn', 'mo', 'msup', 'msub', 'mfrac', 'semantics', 'annotation',
-      'table', 'thead', 'tbody', 'tr', 'th', 'td'
-    ],
-    ADD_ATTR: [
-      'target', 'rel', 'type', 'checked', 'disabled', 'align', 'data-code',
-      'data-diagram', 'data-rendered', 'xmlns', 'viewBox', 'width', 'height', 'fill', 'stroke',
-      'stroke-width', 'stroke-linecap', 'stroke-linejoin', 'd', 'rx', 'ry', 'x', 'y',
-      'aria-hidden', 'display'
-    ],
-    FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form'],
-    FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover', 'onfocus', 'onblur'],
-    ALLOW_DATA_ATTR: true,
-  });
+  if (!dirtyHtml) return '';
+  try {
+    const purifier = getPurifier();
+    if (purifier && typeof purifier.sanitize === 'function') {
+      return purifier.sanitize(dirtyHtml, {
+        USE_PROFILES: { html: true, svg: true, mathMl: true },
+        ADD_TAGS: [
+          'details', 'summary', 'input', 'sup', 'sub', 'u', 'ins', 'del', 'mark', 'kbd',
+          'svg', 'g', 'path', 'circle', 'line', 'polygon', 'text', 'rect',
+          'math', 'mrow', 'mi', 'mn', 'mo', 'msup', 'msub', 'mfrac', 'semantics', 'annotation',
+          'table', 'thead', 'tbody', 'tr', 'th', 'td'
+        ],
+        ADD_ATTR: [
+          'target', 'rel', 'type', 'checked', 'disabled', 'align', 'data-code',
+          'data-diagram', 'data-rendered', 'xmlns', 'viewBox', 'width', 'height', 'fill', 'stroke',
+          'stroke-width', 'stroke-linecap', 'stroke-linejoin', 'd', 'rx', 'ry', 'x', 'y',
+          'aria-hidden', 'display'
+        ],
+        FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form'],
+        FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover', 'onfocus', 'onblur'],
+        ALLOW_DATA_ATTR: true,
+      });
+    }
+  } catch (err) {
+    console.warn('[MarkdownParser] DOMPurify error, using fallback:', err);
+  }
+  return fallbackSanitize(dirtyHtml);
 }
 
 /**
@@ -275,14 +322,17 @@ export function sanitizeMarkdownHtml(dirtyHtml: string): string {
  */
 export function parseMarkdown(content: string, isStreaming = false): string {
   if (!content) return '';
-  const normalized = isStreaming ? normalizeStreamingMarkdown(content) : content;
-  const preprocessed = preprocessMarkdown(normalized);
-
   try {
+    const normalized = isStreaming ? normalizeStreamingMarkdown(content) : content;
+    const preprocessed = preprocessMarkdown(normalized);
     const rawHtml = parserInstance.parse(preprocessed) as string;
     return sanitizeMarkdownHtml(rawHtml);
   } catch (err) {
-    console.warn('[MarkdownParser] Render error:', err);
-    return sanitizeMarkdownHtml(content);
+    console.warn('[MarkdownParser] Parse error:', err);
+    try {
+      return sanitizeMarkdownHtml(content);
+    } catch {
+      return fallbackSanitize(content);
+    }
   }
 }

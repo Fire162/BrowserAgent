@@ -14,7 +14,12 @@ export const MarkdownViewer: React.FC<MarkdownViewerProps> = ({
 
   // Parse markdown with KaTeX math, GFM tables, footnotes, callouts, and DOMPurify sanitization
   const html = useMemo(() => {
-    return parseMarkdown(content, isStreaming);
+    try {
+      return parseMarkdown(content, isStreaming);
+    } catch (err) {
+      console.warn('[MarkdownViewer] useMemo parse error:', err);
+      return content || '';
+    }
   }, [content, isStreaming]);
 
   // Copy-to-clipboard event delegation
