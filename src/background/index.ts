@@ -8,7 +8,7 @@ import { performTabNavigation, performTabScreenshot } from '../core/agent/tab-op
 import { saveTask, TaskRecord, loadSchedules, saveSchedule, loadSettings } from '../core/storage/db';
 import { PROVIDERS } from '../core/llm/providers/registry';
 import { notifyToolbarBadge, clearToolbarBadge, setToolbarBadgeRunning } from '../core/utils/badge';
-import { AllSettings } from '../core/llm/types';
+import { AllSettings, ChatMessage } from '../core/llm/types';
 
 export interface ChatTurn {
   id: string;
@@ -88,16 +88,24 @@ chrome.alarms?.onAlarm?.addListener(async (alarm) => {
     const settings = await loadSettings();
 
     let targetTabId: number | undefined;
+    const requestedUrl = target.url || 'https://www.google.com';
     try {
       const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
       if (tabs && tabs[0]?.id) {
         targetTabId = tabs[0].id;
+        if (target.url && tabs[0].url !== target.url) {
+          try {
+            await chrome.tabs.update(targetTabId, { url: target.url });
+          } catch {
+            // Keep existing tab if update fails
+          }
+        }
       } else {
-        const newTab = await chrome.tabs.create({ url: 'https://www.google.com', active: false });
+        const newTab = await chrome.tabs.create({ url: requestedUrl, active: false });
         targetTabId = newTab.id;
       }
     } catch {
-      const newTab = await chrome.tabs.create({ url: 'https://www.google.com', active: false });
+      const newTab = await chrome.tabs.create({ url: requestedUrl, active: false });
       targetTabId = newTab.id;
     }
 
@@ -111,7 +119,14 @@ chrome.alarms?.onAlarm?.addListener(async (alarm) => {
       await saveSchedule(target);
     }
 
-    runAgent(target.goal, settings, targetTabId);
+    runAgent(target.goal, settings, targetTabId, undefined, {
+      continueSession: target.continueSession !== false,
+      url: target.url,
+      tabTitle: target.tabTitle,
+      context: target.context,
+      sessionMessages: target.sessionMessages,
+      sessionTurns: target.sessionTurns,
+    });
   }
 });
 
@@ -157,15 +172,207 @@ function finalizeSteps() {
   }));
 }
 
+export interface ScheduledRunContext {
+  continueSession?: boolean;
+  url?: string;
+  tabTitle?: string;
+  context?: string;
+  sessionMessages?: ChatMessage[];
+  sessionTurns?: ChatTurn[];
+}
+
 async function runAgent(
   goal: string,
   settings: AllSettings,
   targetTabId?: number,
-  followUpText?: string
+  followUpText?: string,
+  scheduledContext?: ScheduledRunContext
 ) {
   const activeDef = PROVIDERS[settings.activeProvider];
   const activeConfig = settings.providers[settings.activeProvider];
   const currentModel = activeConfig?.customModelId || activeConfig?.selectedModel || activeDef?.defaultModel;
+
+  // Handle scheduled task continuation in existing session
+  if (scheduledContext && scheduledContext.continueSession !== false) {
+    const previousTurns = (scheduledContext.sessionTurns && scheduledContext.sessionTurns.length > 0)
+      ? scheduledContext.sessionTurns
+      : engineState.turns;
+    const previousMessages = (scheduledContext.sessionMessages && scheduledContext.sessionMessages.length > 0)
+      ? scheduledContext.sessionMessages
+      : (activeExecution ? activeExecution.getMessages() : []);
+    const previousSteps = previousTurns.flatMap((t) => t.steps || []);
+
+    const contextParts: string[] = [];
+    if (scheduledContext.url) contextParts.push(`Target URL: ${scheduledContext.url}`);
+    if (scheduledContext.tabTitle) contextParts.push(`Page Title: ${scheduledContext.tabTitle}`);
+    if (scheduledContext.context) contextParts.push(`Prior Context & Memory: ${scheduledContext.context}`);
+    const contextBlock = contextParts.length > 0 ? `\n[SCHEDULED CONTEXT]:\n${contextParts.join('\n')}\n` : '';
+    const scheduledInstruction = `[SCHEDULED TASK TRIGGERED]:\n${goal}${contextBlock}\n*Execute this scheduled task taking into account all prior steps, observations, and context from our conversation.*`;
+
+    const scheduledTurn: ChatTurn = {
+      id: `turn_${Date.now()}`,
+      userPrompt: `⏰ [Scheduled]: ${goal}`,
+      timestamp: Date.now(),
+      steps: [],
+      resultSummary: null,
+      status: 'running',
+    };
+
+    engineState = {
+      ...engineState,
+      isRunning: true,
+      isPaused: false,
+      currentStep: previousSteps.length + 1,
+      liveCostUSD: engineState.liveCostUSD || 0,
+      liveTokens: engineState.liveTokens || 0,
+      liveCachedTokens: engineState.liveCachedTokens || 0,
+      turns: [...previousTurns, scheduledTurn],
+      pendingQuestion: null,
+      pendingBudgetLimit: null,
+      activeGoal: goal,
+      hasActiveSession: true,
+      liveStatus: `Executing scheduled task: "${goal.slice(0, 30)}..."`,
+    };
+    broadcast({ type: 'STATUS_SYNC', state: engineState });
+    startKeepAlive();
+    setToolbarBadgeRunning();
+
+    const startTime = Date.now();
+
+    const execution = new AgentExecution(
+      settings,
+      goal,
+      {
+        onStepStart: (num) => {
+          engineState.currentStep = num;
+          broadcast({ type: 'STEP_START', stepNumber: num });
+        },
+        onStepComplete: (step) => {
+          if (engineState.turns.length > 0) {
+            const lastIdx = engineState.turns.length - 1;
+            const currentTurn = engineState.turns[lastIdx];
+            const existingStepIdx = currentTurn.steps.findIndex((s) => s.stepNumber === step.stepNumber);
+            let updatedSteps: StepRecord[];
+            if (existingStepIdx >= 0) {
+              updatedSteps = [...currentTurn.steps];
+              updatedSteps[existingStepIdx] = { ...step };
+            } else {
+              updatedSteps = [...currentTurn.steps, step];
+            }
+            engineState.turns[lastIdx] = { ...currentTurn, steps: updatedSteps };
+            broadcast({ type: 'STEP_COMPLETE', step, turns: engineState.turns });
+          }
+        },
+        onCostUpdate: (cost, tokens, cached) => {
+          engineState.liveCostUSD = cost;
+          engineState.liveTokens = tokens;
+          if (cached !== undefined) engineState.liveCachedTokens = cached;
+          broadcast({ type: 'COST_UPDATE', cost, tokens, cached });
+        },
+        onLog: (msg) => {
+          engineState.liveStatus = msg;
+          broadcast({ type: 'LOG', message: msg });
+        },
+        onFinish: (summary) => {
+          if (engineState.turns.length > 0) {
+            const lastIdx = engineState.turns.length - 1;
+            engineState.turns[lastIdx] = {
+              ...engineState.turns[lastIdx],
+              resultSummary: summary,
+              status: 'completed',
+            };
+          }
+          engineState.liveStatus = 'Scheduled task completed.';
+          notifyUser('finish', { summary });
+          broadcast({ type: 'FINISH', summary, turns: engineState.turns });
+        },
+        onError: (err) => {
+          engineState.liveStatus = `Error: ${err.message}`;
+          notifyUser('error', { error: err.message });
+          broadcast({ type: 'ERROR', error: err.message });
+        },
+        onAskUser: (question: string) => {
+          engineState.pendingQuestion = question;
+          notifyUser('ask_user', { question });
+          broadcast({ type: 'ASK_USER', question });
+          return new Promise<string>((resolve) => {
+            userPromptResolver = resolve;
+          });
+        },
+        onBudgetLimitReached: (currentSpentUSD: number, currentCapUSD: number) => {
+          engineState.pendingBudgetLimit = { currentSpentUSD, currentCapUSD };
+          notifyUser('budget_limit');
+          broadcast({ type: 'BUDGET_LIMIT', currentSpentUSD, currentCapUSD });
+          return new Promise<BudgetLimitDecision>((resolve) => {
+            budgetLimitResolver = resolve;
+          });
+        },
+        onTargetTabChanged: (info) => {
+          engineState.targetTab = info;
+          broadcast({ type: 'TARGET_TAB_CHANGED', info });
+        },
+        onGetSessionTurns: () => engineState.turns,
+      },
+      previousMessages.length > 0 ? previousMessages : undefined,
+      previousSteps.length > 0 ? previousSteps : undefined,
+      targetTabId
+    );
+
+    activeExecution = execution;
+
+    try {
+      const summary = await execution.run(scheduledInstruction);
+      const isPaused = execution.isPaused();
+      engineState.isRunning = false;
+      engineState.isPaused = isPaused;
+      engineState.liveStatus = isPaused ? 'Task paused. Enter follow-up instructions to resume.' : 'Scheduled task completed.';
+
+      const lastIdx = engineState.turns.length - 1;
+      if (lastIdx >= 0) {
+        engineState.turns[lastIdx] = {
+          ...engineState.turns[lastIdx],
+          resultSummary: summary,
+          status: isPaused ? 'paused' : 'completed',
+        };
+      }
+
+      if (!isPaused) {
+        await saveTask({
+          id: `task_${Date.now()}`,
+          goal,
+          provider: activeDef?.name || settings.activeProvider,
+          model: currentModel,
+          status: 'completed',
+          stepCount: execution.getSteps().length,
+          resultSummary: summary,
+          steps: execution.getSteps(),
+          messages: execution.getMessages(),
+          turns: engineState.turns,
+          createdAt: startTime,
+          completedAt: Date.now(),
+        });
+
+        notifyUser('finish', { summary });
+      }
+    } catch (err: any) {
+      engineState.isRunning = false;
+      engineState.liveStatus = `Scheduled task error: ${err.message}`;
+      const lastIdx = engineState.turns.length - 1;
+      if (lastIdx >= 0) {
+        engineState.turns[lastIdx] = {
+          ...engineState.turns[lastIdx],
+          resultSummary: `Task terminated with error: ${err.message}`,
+          status: 'failed',
+        };
+      }
+      notifyUser('error', { error: err.message });
+    } finally {
+      stopKeepAlive();
+      finalizeSteps();
+      broadcast({ type: 'STATUS_SYNC', state: engineState });
+    }
+    return;
+  }
 
   // Handle follow-up resume
   if (followUpText && activeExecution) {
@@ -343,6 +550,7 @@ async function runAgent(
         engineState.targetTab = info;
         broadcast({ type: 'TARGET_TAB_CHANGED', info });
       },
+      onGetSessionTurns: () => engineState.turns,
     },
     undefined,
     undefined,
@@ -516,6 +724,7 @@ function resumeHistoryTask(task: TaskRecord, settings: AllSettings) {
         engineState.targetTab = info;
         broadcast({ type: 'TARGET_TAB_CHANGED', info });
       },
+      onGetSessionTurns: () => engineState.turns,
     },
     task.messages,
     task.steps,

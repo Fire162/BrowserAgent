@@ -208,7 +208,7 @@ export const AGENT_TOOLS: ToolDefinition[] = [
   },
   {
     name: 'schedule_task',
-    description: 'Schedule a future or recurring autonomous browser task using chrome.alarms. The agent will automatically awaken and execute this goal at the scheduled time.',
+    description: 'Schedule a future or recurring autonomous browser task using chrome.alarms. Retains all previous conversation steps, observations, and memory by default.',
     parameters: {
       type: 'object',
       properties: {
@@ -223,6 +223,26 @@ export const AGENT_TOOLS: ToolDefinition[] = [
         periodInMinutes: {
           type: 'string',
           description: 'Optional recurring interval in minutes for recurring jobs (e.g. "60" for every hour).',
+        },
+        continue_session: {
+          type: 'boolean',
+          description: 'Whether to continue the current chat session and retain all previous steps, observations, and memory (default: true). Set to false only if you want to start a clean, isolated chat.',
+        },
+        open_in_new_chat: {
+          type: 'boolean',
+          description: 'Alias for !continue_session. If true, starts a clean isolated chat instead of continuing the current conversation.',
+        },
+        url: {
+          type: 'string',
+          description: 'Target webpage URL to inspect or navigate to. Auto-bound to current page if omitted.',
+        },
+        title: {
+          type: 'string',
+          description: 'Page title or topic label. Auto-bound to current tab title if omitted.',
+        },
+        context: {
+          type: 'string',
+          description: 'Key observations, intermediate data, or memory from prior steps to carry forward across time (e.g. previous price seen, search query, or item details).',
         },
       },
       required: ['goal', 'delayInMinutes'],

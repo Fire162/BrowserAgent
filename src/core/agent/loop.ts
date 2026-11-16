@@ -43,6 +43,7 @@ export interface AgentRunCallbacks {
   onBudgetLimitReached?: (currentSpentUSD: number, currentCapUSD: number) => Promise<BudgetLimitDecision>;
   onCostUpdate?: (costUSD: number, totalTokens: number, cachedTokens?: number) => void;
   onTargetTabChanged?: (tabInfo: TargetTabInfo) => void;
+  onGetSessionTurns?: () => any[];
 }
 
 export interface ActionRecord {
@@ -904,6 +905,22 @@ What is your next action?`;
               ? Math.max(1, parseFloat(currentTool.arguments.periodInMinutes))
               : undefined;
 
+            let continueSession = true;
+            if (currentTool.arguments.continue_session !== undefined) {
+              continueSession = String(currentTool.arguments.continue_session) === 'true' || currentTool.arguments.continue_session === true;
+            } else if (currentTool.arguments.open_in_new_chat !== undefined) {
+              continueSession = !(String(currentTool.arguments.open_in_new_chat) === 'true' || currentTool.arguments.open_in_new_chat === true);
+            } else if (currentTool.arguments.new_chat !== undefined) {
+              continueSession = !(String(currentTool.arguments.new_chat) === 'true' || currentTool.arguments.new_chat === true);
+            }
+
+            const targetUrl = currentTool.arguments.url || this.targetTabInfo?.url || '';
+            const targetTitle = currentTool.arguments.title || this.targetTabInfo?.title || '';
+            const contextNotes = currentTool.arguments.context || '';
+
+            const sessionTurns = this.callbacks.onGetSessionTurns?.() || [];
+            const sessionMessages = [...this.messages];
+
             const scheduleId = `schedule_${Date.now()}`;
             const nextRunAt = Date.now() + delayInMinutes * 60 * 1000;
 
@@ -915,6 +932,12 @@ What is your next action?`;
               createdAt: Date.now(),
               nextRunAt,
               status: 'active',
+              continueSession,
+              url: targetUrl,
+              tabTitle: targetTitle,
+              context: contextNotes,
+              sessionMessages: continueSession ? sessionMessages : undefined,
+              sessionTurns: continueSession ? sessionTurns : undefined,
             };
 
             await saveSchedule(scheduleRec);
@@ -927,8 +950,9 @@ What is your next action?`;
             }
 
             const recurMsg = periodInMinutes ? ` (repeating every ${periodInMinutes}m)` : ' (one-off)';
-            resultStr = `Successfully scheduled autonomous task "${goal}" to execute in ${delayInMinutes} minute(s)${recurMsg}. Schedule ID: ${scheduleId}. Trigger time: ${new Date(nextRunAt).toLocaleTimeString()}.`;
-            this.callbacks.onLog?.(`⏰ Scheduled task: "${goal.slice(0, 30)}..." in ${delayInMinutes}m`);
+            const sessionModeMsg = continueSession ? 'in current chat session' : 'in new chat session';
+            resultStr = `Successfully scheduled autonomous task "${goal}" to execute in ${delayInMinutes} minute(s)${recurMsg} (${sessionModeMsg}). Schedule ID: ${scheduleId}. Trigger time: ${new Date(nextRunAt).toLocaleTimeString()}.`;
+            this.callbacks.onLog?.(`⏰ Scheduled task: "${goal.slice(0, 30)}..." in ${delayInMinutes}m (${sessionModeMsg})`);
 
             executedResults.push({
               id: toolCallId,
@@ -943,7 +967,8 @@ What is your next action?`;
             } else {
               resultStr = `Active scheduled tasks (${activeList.length}):\n` + activeList.map((s, idx) => {
                 const nextStr = new Date(s.nextRunAt).toLocaleTimeString();
-                return `${idx + 1}. [${s.id}] "${s.goal}" - Next trigger at ${nextStr}${s.periodInMinutes ? ` (every ${s.periodInMinutes}m)` : ''}`;
+                const sessionStr = s.continueSession === false ? ' [new chat]' : ' [same chat]';
+                return `${idx + 1}. [${s.id}] "${s.goal}" - Next trigger at ${nextStr}${s.periodInMinutes ? ` (every ${s.periodInMinutes}m)` : ''}${sessionStr}`;
               }).join('\n');
             }
             executedResults.push({

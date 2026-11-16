@@ -26,6 +26,12 @@ export interface ScheduleRecord {
   status: 'active' | 'completed' | 'cancelled';
   lastRunAt?: number;
   lastSummary?: string;
+  continueSession?: boolean;
+  url?: string;
+  tabTitle?: string;
+  context?: string;
+  sessionMessages?: any[];
+  sessionTurns?: any[];
 }
 
 const SETTINGS_KEY = 'browseragent_settings';
