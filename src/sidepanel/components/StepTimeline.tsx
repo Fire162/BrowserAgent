@@ -121,7 +121,7 @@ export const StepTimeline: React.FC<StepTimelineProps> = ({ steps, isRunning = f
                     <div>
                       <span className="font-semibold text-slate-400 block mb-0.5">Reasoning:</span>
                       <div className="bg-slate-900/60 p-2 rounded border border-slate-800">
-                        <MarkdownViewer content={step.thought} className="text-[11px]" />
+                        <MarkdownViewer content={step.thought} isStreaming={step.status === 'running'} className="text-[11px]" />
                       </div>
                     </div>
                   )}

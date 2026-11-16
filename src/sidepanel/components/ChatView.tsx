@@ -715,7 +715,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
                       </div>
                     </div>
                     <div className="text-xs">
-                      <MarkdownViewer content={turn.resultSummary} />
+                      <MarkdownViewer content={turn.resultSummary} isStreaming={turn.status === 'running'} />
                     </div>
                   </div>
                 </div>

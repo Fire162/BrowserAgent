@@ -16,39 +16,59 @@
   background: #475569;
 }
 
-/* Markdown typography for parsed LLM responses */
+/* =========================================================================
+   Markdown Typography & Syntax Highlighting (Dark & Light Themes)
+   ========================================================================= */
+
 .markdown-body {
   color: #e2e8f0;
   font-size: 0.8125rem;
-  line-height: 1.6;
+  line-height: 1.65;
+  word-break: break-word;
 }
 
+.markdown-body.light {
+  color: #1e293b;
+}
+
+/* Headings (H1 - H6) */
 .markdown-body h1 {
-  font-size: 1.15rem;
+  font-size: 1.25rem;
   font-weight: 700;
   color: #ffffff;
-  margin-top: 0.75rem;
-  margin-bottom: 0.4rem;
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
   border-bottom: 1px solid #334155;
-  padding-bottom: 0.25rem;
+  padding-bottom: 0.35rem;
+}
+.markdown-body.light h1 {
+  color: #0f172a;
+  border-bottom-color: #cbd5e1;
 }
 
 .markdown-body h2 {
-  font-size: 1.05rem;
+  font-size: 1.1rem;
   font-weight: 600;
   color: #f8fafc;
-  margin-top: 0.65rem;
-  margin-bottom: 0.35rem;
+  margin-top: 0.85rem;
+  margin-bottom: 0.4rem;
   border-bottom: 1px solid #1e293b;
-  padding-bottom: 0.2rem;
+  padding-bottom: 0.25rem;
+}
+.markdown-body.light h2 {
+  color: #1e293b;
+  border-bottom-color: #e2e8f0;
 }
 
 .markdown-body h3 {
-  font-size: 0.95rem;
+  font-size: 0.975rem;
   font-weight: 600;
   color: #f1f5f9;
-  margin-top: 0.5rem;
-  margin-bottom: 0.25rem;
+  margin-top: 0.75rem;
+  margin-bottom: 0.3rem;
+}
+.markdown-body.light h3 {
+  color: #334155;
 }
 
 .markdown-body h4,
@@ -57,12 +77,18 @@
   font-size: 0.875rem;
   font-weight: 600;
   color: #e2e8f0;
-  margin-top: 0.4rem;
-  margin-bottom: 0.2rem;
+  margin-top: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+.markdown-body.light h4,
+.markdown-body.light h5,
+.markdown-body.light h6 {
+  color: #475569;
 }
 
+/* Paragraphs & Text Formatting */
 .markdown-body p {
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.65rem;
 }
 
 .markdown-body p:last-child {
@@ -73,68 +99,235 @@
   font-weight: 600;
   color: #ffffff;
 }
+.markdown-body.light strong {
+  color: #0f172a;
+}
 
 .markdown-body em {
   font-style: italic;
   color: #cbd5e1;
 }
+.markdown-body.light em {
+  color: #475569;
+}
 
+.markdown-body ins,
+.markdown-body u {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.markdown-body del,
+.markdown-body s {
+  text-decoration: line-through;
+  opacity: 0.75;
+}
+
+.markdown-body sup {
+  font-size: 0.7em;
+  vertical-align: super;
+  line-height: 0;
+}
+
+.markdown-body sub {
+  font-size: 0.7em;
+  vertical-align: sub;
+  line-height: 0;
+}
+
+.markdown-body mark {
+  background-color: rgba(250, 204, 21, 0.2);
+  color: #fde047;
+  padding: 0.1rem 0.25rem;
+  border-radius: 0.2rem;
+}
+
+.markdown-body kbd {
+  background-color: #1e293b;
+  color: #f1f5f9;
+  border: 1px solid #334155;
+  border-radius: 0.25rem;
+  box-shadow: 0 1px 0 #0f172a;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.7rem;
+  padding: 0.1rem 0.35rem;
+}
+
+/* Lists & Task Lists */
 .markdown-body ul {
   list-style-type: disc;
-  padding-left: 1.25rem;
-  margin-bottom: 0.5rem;
+  padding-left: 1.35rem;
+  margin-bottom: 0.65rem;
+}
+
+.markdown-body ul ul {
+  list-style-type: circle;
+  margin-bottom: 0.2rem;
+}
+
+.markdown-body ul ul ul {
+  list-style-type: square;
 }
 
 .markdown-body ol {
   list-style-type: decimal;
-  padding-left: 1.25rem;
-  margin-bottom: 0.5rem;
+  padding-left: 1.35rem;
+  margin-bottom: 0.65rem;
 }
 
 .markdown-body li {
-  margin-bottom: 0.2rem;
+  margin-bottom: 0.25rem;
+  line-height: 1.6;
 }
 
-.markdown-body code {
+/* Task List Checkboxes */
+.markdown-body li:has(input[type="checkbox"]) {
+  list-style: none;
+  margin-left: -1rem;
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+
+.markdown-body input[type="checkbox"] {
+  width: 0.85rem;
+  height: 0.85rem;
+  accent-color: #0284c7;
+  cursor: default;
+  vertical-align: middle;
+}
+
+/* Inline Code */
+.markdown-body code:not(pre code) {
   background-color: #0f172a;
   border: 1px solid #1e293b;
   border-radius: 0.25rem;
-  padding: 0.1rem 0.3rem;
+  padding: 0.12rem 0.35rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 0.75rem;
   color: #38bdf8;
 }
+.markdown-body.light code:not(pre code) {
+  background-color: #f1f5f9;
+  border-color: #e2e8f0;
+  color: #0284c7;
+}
+
+/* Code Blocks */
+.markdown-body .code-block-wrapper {
+  margin: 0.75rem 0;
+  border-radius: 0.5rem;
+  border: 1px solid #1e293b;
+  background-color: #020617;
+  overflow: hidden;
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.2);
+}
+.markdown-body.light .code-block-wrapper {
+  background-color: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+.markdown-body .code-block-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.35rem 0.75rem;
+  background-color: #0b0f19;
+  border-bottom: 1px solid #1e293b;
+}
+.markdown-body.light .code-block-header {
+  background-color: #f1f5f9;
+  border-bottom-color: #e2e8f0;
+}
 
 .markdown-body pre {
-  background-color: #020617;
-  border: 1px solid #1e293b;
-  border-radius: 0.5rem;
-  padding: 0.6rem 0.75rem;
+  margin: 0;
+  padding: 0.75rem;
   overflow-x: auto;
-  margin-top: 0.5rem;
-  margin-bottom: 0.5rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.75rem;
+  line-height: 1.6;
 }
 
 .markdown-body pre code {
-  background-color: transparent;
-  border: none;
-  padding: 0;
+  background-color: transparent !important;
+  border: none !important;
+  padding: 0 !important;
   color: #f1f5f9;
   font-size: 0.75rem;
 }
+.markdown-body.light pre code {
+  color: #1e293b;
+}
 
-.markdown-body blockquote {
-  border-left: 3px solid #38bdf8;
-  padding-left: 0.75rem;
-  margin: 0.5rem 0;
-  color: #94a3b8;
+/* Prism Syntax Highlighting Tokens */
+.token.comment,
+.token.prolog,
+.token.doctype,
+.token.cdata {
+  color: #64748b;
   font-style: italic;
+}
+
+.token.punctuation {
+  color: #94a3b8;
+}
+
+.token.property,
+.token.tag,
+.token.boolean,
+.token.number,
+.token.constant,
+.token.symbol {
+  color: #fb7185;
+}
+
+.token.selector,
+.token.attr-name,
+.token.string,
+.token.char,
+.token.builtin {
+  color: #34d399;
+}
+
+.token.operator,
+.token.entity,
+.token.url {
+  color: #38bdf8;
+}
+
+.token.atrule,
+.token.attr-value,
+.token.keyword {
+  color: #c084fc;
+  font-weight: 600;
+}
+
+.token.function,
+.token.class-name {
+  color: #60a5fa;
+}
+
+.token.regex,
+.token.important,
+.token.variable {
+  color: #facc15;
+}
+
+/* Tables */
+.markdown-body .table-container {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin: 0.75rem 0;
+  border-radius: 0.5rem;
+  border: 1px solid #334155;
 }
 
 .markdown-body table {
   width: 100%;
   border-collapse: collapse;
-  margin: 0.5rem 0;
   font-size: 0.75rem;
 }
 
@@ -142,33 +335,140 @@
   background-color: #1e293b;
   color: #f1f5f9;
   font-weight: 600;
-  text-align: left;
-  padding: 0.35rem 0.5rem;
+  padding: 0.45rem 0.65rem;
   border: 1px solid #334155;
+  white-space: nowrap;
+}
+.markdown-body.light th {
+  background-color: #f1f5f9;
+  color: #0f172a;
+  border-color: #cbd5e1;
 }
 
 .markdown-body td {
-  padding: 0.35rem 0.5rem;
+  padding: 0.4rem 0.65rem;
   border: 1px solid #334155;
   color: #cbd5e1;
 }
-
-.markdown-body tr:nth-child(even) td {
-  background-color: rgba(15, 23, 42, 0.5);
+.markdown-body.light td {
+  border-color: #e2e8f0;
+  color: #334155;
 }
 
+.markdown-body tr:nth-child(even) td {
+  background-color: rgba(15, 23, 42, 0.4);
+}
+.markdown-body.light tr:nth-child(even) td {
+  background-color: rgba(241, 245, 249, 0.6);
+}
+
+/* Links */
 .markdown-body a {
   color: #38bdf8;
   text-decoration: underline;
   text-underline-offset: 2px;
+  transition: color 0.15s ease;
 }
-
 .markdown-body a:hover {
   color: #7dd3fc;
 }
+.markdown-body.light a {
+  color: #0284c7;
+}
+.markdown-body.light a:hover {
+  color: #0369a1;
+}
 
+/* Horizontal Rules */
 .markdown-body hr {
   border: 0;
   border-top: 1px solid #334155;
+  margin: 1rem 0;
+}
+.markdown-body.light hr {
+  border-top-color: #cbd5e1;
+}
+
+/* KaTeX Math Containers */
+.markdown-body .katex-display-container {
+  overflow-x: auto;
+  max-width: 100%;
+  padding: 0.5rem 0;
   margin: 0.75rem 0;
+}
+
+.markdown-body .katex-inline-container {
+  display: inline-block;
+  padding: 0 0.1rem;
+}
+
+/* Details & Collapsible Sections */
+.markdown-body details {
+  margin: 0.75rem 0;
+  border: 1px solid #334155;
+  border-radius: 0.5rem;
+  background-color: rgba(15, 23, 42, 0.5);
+  padding: 0.5rem 0.75rem;
+  transition: all 0.2s ease;
+}
+.markdown-body.light details {
+  background-color: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+.markdown-body details[open] {
+  background-color: rgba(15, 23, 42, 0.8);
+  border-color: #475569;
+}
+.markdown-body.light details[open] {
+  background-color: #ffffff;
+}
+
+.markdown-body summary {
+  font-weight: 600;
+  cursor: pointer;
+  color: #38bdf8;
+  outline: none;
+  user-select: none;
+  padding: 0.15rem 0;
+}
+.markdown-body summary:hover {
+  color: #7dd3fc;
+}
+.markdown-body.light summary {
+  color: #0284c7;
+}
+
+/* Footnotes */
+.markdown-body .footnotes {
+  margin-top: 1.25rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid #334155;
+  font-size: 0.75rem;
+  color: #94a3b8;
+}
+
+.markdown-body .footnote-ref {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.7rem;
+  text-decoration: none;
+  color: #38bdf8;
+}
+
+.markdown-body .footnote-backref {
+  text-decoration: none;
+  margin-left: 0.25rem;
+}
+
+/* Mermaid Diagrams */
+.markdown-body .mermaid-block {
+  max-width: 100%;
+  overflow-x: auto;
+  text-align: center;
+}
+
+.markdown-body .mermaid-block svg {
+  margin: 0 auto;
+  max-width: 100%;
+  height: auto;
 }
